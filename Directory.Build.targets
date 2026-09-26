@@ -1,0 +1,9 @@
+<Project>
+  <!-- Analyzer OpenCvSharp 4.13 dikompilasi untuk Roslyn 4.14 (SDK 9+) dan gagal di SDK 8.
+       Analyzer hanya membantu saat menulis kode, tidak memengaruhi runtime. -->
+  <Target Name="RemoveOpenCvSharpAnalyzers" BeforeTargets="CoreCompile">
+    <ItemGroup>
+      <Analyzer Remove="@(Analyzer)" Condition="'%(Filename)' == 'OpenCvSharp.Analyzers'" />
+    </ItemGroup>
+  </Target>
+</Project>
