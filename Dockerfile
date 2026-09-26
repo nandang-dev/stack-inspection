@@ -7,7 +7,9 @@ ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 COPY Directory.Build.props Directory.Build.targets StackInspection.sln ./
 COPY src/ src/
 COPY fixtures/ fixtures/
-RUN dotnet restore src/StackInspection.Api/StackInspection.Api.csproj -r linux-x64
+# -p:RuntimeIdentifier wajib: tanpa itu `restore -r` terpisah tidak memenuhi kondisi RuntimeIdentifier di csproj,
+# sehingga paket native (OpenCV, PaddleInference) tidak ikut dan API gagal memuat paddle_inference_c.
+RUN dotnet restore src/StackInspection.Api/StackInspection.Api.csproj -r linux-x64 -p:RuntimeIdentifier=linux-x64
 RUN dotnet publish src/StackInspection.Api/StackInspection.Api.csproj -c Release -r linux-x64 \
     --self-contained false --no-restore -o /app
 
