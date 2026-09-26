@@ -11,7 +11,7 @@ appsettings.Development.json
 appsettings.*.local.json
 .env
 
-# Model (dibaca dari konfigurasi, tidak di-commit)
+# Model deteksi TIDAK di-commit; lokasinya dari Vision:ModelsDirectory (lihat README)
 models/
 *.onnx
 

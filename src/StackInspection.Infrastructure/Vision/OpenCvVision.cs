@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.Extensions.Options;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
@@ -66,22 +67,32 @@ public sealed class OpenCvImageDecoder : IImageDecoder
     }
 }
 
-/// <summary>Detector kardus YOLOX (ONNX Runtime, CPU). Session dibuat sekali (singleton, thread-safe untuk Run).</summary>
+/// <summary>
+/// Detector kardus YOLOX (ONNX Runtime, CPU). Satu session per model, dibuat saat model pertama kali
+/// dipakai lalu disimpan (thread-safe untuk Run).
+/// </summary>
 public sealed class OnnxCartonDetector : ICartonDetector, IDisposable
 {
-    private readonly InferenceSession _session;
-    private readonly string _inputName;
+    private readonly ConcurrentDictionary<string, Lazy<InferenceSession>> _sessions = new(StringComparer.Ordinal);
     private readonly VisionOptions _options;
 
     public OnnxCartonDetector(IOptions<VisionOptions> options)
     {
         ArgumentNullException.ThrowIfNull(options);
         _options = options.Value;
-        string path = ResolvePath(_options.DetectorModelPath);
+    }
+
+    public static string ResolvePath(string path) =>
+        Path.IsPathRooted(path) ? path : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, path));
+
+    private InferenceSession Session(DetectionModel model) =>
+        _sessions.GetOrAdd(model.OnnxPath, path => new Lazy<InferenceSession>(() => CreateSession(path))).Value;
+
+    private InferenceSession CreateSession(string path)
+    {
         if (!File.Exists(path))
         {
-            throw new FileNotFoundException(
-                $"Model deteksi tidak ditemukan: {path}. Salin file .onnx hasil export Carton Trainer ke lokasi ini.", path);
+            throw new FileNotFoundException($"File model tidak ditemukan: {path}.", path);
         }
 
         SessionOptions sessionOptions = new()
@@ -89,17 +100,15 @@ public sealed class OnnxCartonDetector : ICartonDetector, IDisposable
             IntraOpNumThreads = _options.Threads,
             GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
         };
-        _session = new InferenceSession(path, sessionOptions);
-        _inputName = _session.InputMetadata.Keys.First();
+        return new InferenceSession(path, sessionOptions);
     }
 
-    public static string ResolvePath(string path) =>
-        Path.IsPathRooted(path) ? path : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, path));
-
-    public Task<IReadOnlyList<CartonBox>> DetectAsync(VisionImage image, CancellationToken cancellationToken)
+    public Task<IReadOnlyList<CartonBox>> DetectAsync(VisionImage image, DetectionModel model, CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(model);
         OpenCvImage source = OpenCvImage.From(image);
-        int size = _options.InputSize;
+        InferenceSession session = Session(model);
+        int size = model.InputSize;
         LetterboxGeometry geometry = LetterboxGeometry.Compute(source.Width, source.Height, size);
 
         using Mat resized = new();
@@ -113,13 +122,14 @@ public sealed class OnnxCartonDetector : ICartonDetector, IDisposable
         float[] input = ToChwFloat(canvas, size);
         DenseTensor<float> tensor = new(input, [1, 3, size, size]);
         cancellationToken.ThrowIfCancellationRequested();
+        string inputName = session.InputMetadata.Keys.First();
         using IDisposableReadOnlyCollection<DisposableNamedOnnxValue> results =
-            _session.Run([NamedOnnxValue.CreateFromTensor(_inputName, tensor)]);
+            session.Run([NamedOnnxValue.CreateFromTensor(inputName, tensor)]);
         Tensor<float> output = results[0].AsTensor<float>();
         float[] values = output is DenseTensor<float> dense ? dense.Buffer.ToArray() : [.. output];
 
         IReadOnlyList<CartonBox> boxes = YoloxPostprocessor.Decode(
-            values, geometry.Ratio, _options.ConfidenceThreshold, _options.IouThreshold, source.Width, source.Height);
+            values, geometry.Ratio, model.ConfidenceThreshold, model.IouThreshold, source.Width, source.Height);
         return Task.FromResult(boxes);
     }
 
@@ -150,5 +160,11 @@ public sealed class OnnxCartonDetector : ICartonDetector, IDisposable
         return chw;
     }
 
-    public void Dispose() => _session.Dispose();
+    public void Dispose()
+    {
+        foreach (Lazy<InferenceSession> session in _sessions.Values.Where(s => s.IsValueCreated))
+        {
+            session.Value.Dispose();
+        }
+    }
 }

@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.OpenApi.Models;
 using StackInspection.Api.Errors;
+using StackInspection.Api.Swagger;
 using StackInspection.Application;
 using StackInspection.Application.Configuration;
 using StackInspection.Application.Contracts;
@@ -43,6 +44,7 @@ builder.Services.AddSwaggerGen(options =>
     }
 
     options.ExampleFilters();
+    options.OperationFilter<ModelDropdownFilter>();
 });
 builder.Services.AddSwaggerExamplesFromAssemblyOf<Program>();
 

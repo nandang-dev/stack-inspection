@@ -18,11 +18,31 @@ internal sealed class StubDetector(IReadOnlyList<CartonBox> cartons) : ICartonDe
 {
     public int Calls { get; private set; }
 
-    public Task<IReadOnlyList<CartonBox>> DetectAsync(VisionImage image, CancellationToken cancellationToken)
+    public DetectionModel? LastModel { get; private set; }
+
+    public Task<IReadOnlyList<CartonBox>> DetectAsync(VisionImage image, DetectionModel model, CancellationToken cancellationToken)
     {
         Calls++;
+        LastModel = model;
         return Task.FromResult(cartons);
     }
+}
+
+internal sealed class StubCatalog : IModelCatalog
+{
+    private readonly DetectionModel[] _models =
+    [
+        new("carton-v1", "a.onnx", 960, 0.5, 0.5, "candidate", "yolox-tiny", "ds-v1", null, null),
+        new("carton-v2", "b.onnx", 960, 0.4, 0.5, "approved", "carton-v1", "ds-v2", null, null),
+    ];
+
+    public string DefaultModelName => "carton-v1";
+
+    public IReadOnlyList<DetectionModel> List() => _models;
+
+    public DetectionModel Resolve(string? name) =>
+        _models.FirstOrDefault(m => m.Name == (string.IsNullOrWhiteSpace(name) ? DefaultModelName : name))
+        ?? throw new Exceptions.RequestValidationException("model", "tidak ditemukan");
 }
 
 /// <summary>Teks per kardus: area label → <c>label</c>, seluruh kardus → <c>box</c>.</summary>
@@ -78,6 +98,7 @@ internal static class Build
         return new CollectSkuHandler(
             decoder,
             detector,
+            new StubCatalog(),
             reader,
             inspectability,
             Options.Create(new VisionOptions()),

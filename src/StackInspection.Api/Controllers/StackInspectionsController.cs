@@ -30,9 +30,10 @@ public sealed class StackInspectionsController : ControllerBase
     /// </remarks>
     /// <param name="image">Foto JPG/PNG, maksimal <c>Upload:MaxFileSizeMb</c>.</param>
     /// <param name="candidateSkus">Daftar kode SKU untuk fuzzy match (opsional, boleh dipisah koma).</param>
+    /// <param name="model">Model deteksi (opsional). Kosong = model default. Lihat <c>GET /api/v1/models</c>.</param>
     /// <param name="cancellationToken">Token pembatalan.</param>
     /// <response code="200">Hasil deteksi dan pembacaan SKU.</response>
-    /// <response code="400">File kosong, format tidak didukung, terlalu besar, atau tidak bisa dibaca.</response>
+    /// <response code="400">File kosong, format tidak didukung, terlalu besar, tidak bisa dibaca, atau model tidak dikenal.</response>
     /// <response code="422">Foto tidak layak dinilai (<c>PHOTO_NOT_INSPECTABLE</c>).</response>
     [HttpPost("collect-sku")]
     [Consumes("multipart/form-data")]
@@ -45,6 +46,7 @@ public sealed class StackInspectionsController : ControllerBase
     public async Task<ActionResult<CollectSkuResponse>> CollectSku(
         IFormFile? image,
         [FromForm] List<string>? candidateSkus,
+        [FromForm] string? model,
         CancellationToken cancellationToken)
     {
         byte[] data = [];
@@ -56,7 +58,7 @@ public sealed class StackInspectionsController : ControllerBase
         }
 
         CollectSkuResponse response = await _collect
-            .HandleAsync(new CollectSkuCommand(data, candidateSkus ?? []), cancellationToken)
+            .HandleAsync(new CollectSkuCommand(data, candidateSkus ?? [], model), cancellationToken)
             .ConfigureAwait(false);
         return Ok(response);
     }

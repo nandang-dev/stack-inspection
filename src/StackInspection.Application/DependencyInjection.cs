@@ -4,6 +4,7 @@ using StackInspection.Application.Analyze;
 using StackInspection.Application.CollectSku;
 using StackInspection.Application.Configuration;
 using StackInspection.Application.Inspectability;
+using StackInspection.Application.Models;
 using StackInspection.Domain;
 
 namespace StackInspection.Application;
@@ -27,6 +28,7 @@ public static class DependencyInjection
         services.AddSingleton<PhotoInspectabilityService>();
         services.AddScoped<CollectSkuHandler>();
         services.AddScoped<AnalyzeStackHandler>();
+        services.AddScoped<ListModelsHandler>();
         return services;
     }
 }

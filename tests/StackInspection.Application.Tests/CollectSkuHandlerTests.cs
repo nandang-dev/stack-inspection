@@ -168,4 +168,31 @@ public class CollectSkuHandlerTests
         Build.Jpeg.CopyTo(big, 0);
         await Assert.ThrowsAsync<RequestValidationException>(() => handler.HandleAsync(new CollectSkuCommand(big, []), None));
     }
+
+    [Fact]
+    public async Task Model_DefaultAndSelectedAreUsed()
+    {
+        (List<CartonBox> cartons, Dictionary<BoundingBox, (string?, string?)> texts) = Grid(1, 1, "68140913");
+        StubDetector detector = new(cartons);
+        CollectSkuHandler handler = Build.Handler(new StubDecoder(3000, 4000), detector, new StubReader(texts));
+
+        CollectSkuResponse byDefault = await handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None);
+        Assert.Equal(("carton-v1", "carton-v1"), (byDefault.Model, detector.LastModel?.Name));
+
+        CollectSkuResponse chosen = await handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, [], "carton-v2"), None);
+        Assert.Equal(("carton-v2", 0.4), (chosen.Model, detector.LastModel?.ConfidenceThreshold));
+    }
+
+    [Fact]
+    public async Task Model_UnknownName_IsValidationErrorBeforeDecoding()
+    {
+        StubDetector detector = new([]);
+        CollectSkuHandler handler = Build.Handler(new StubDecoder(3000, 4000), detector, new StubReader([]));
+
+        RequestValidationException error = await Assert.ThrowsAsync<RequestValidationException>(
+            () => handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, [], "carton-v9"), None));
+
+        Assert.Contains("model", error.Errors.Keys);
+        Assert.Equal(0, detector.Calls);
+    }
 }

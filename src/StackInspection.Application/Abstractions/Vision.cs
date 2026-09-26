@@ -36,10 +36,38 @@ public interface IImageDecoder
     VisionImage Decode(ReadOnlyMemory<byte> data);
 }
 
-/// <summary>Mendeteksi kardus pada foto.</summary>
+/// <summary>Metrik evaluasi model di golden test set (dari model card Carton Trainer).</summary>
+public sealed record ModelMetrics(double Precision, double Recall, double Map50, double Map50To95);
+
+/// <summary>Satu model deteksi yang tersedia.</summary>
+public sealed record DetectionModel(
+    string Name,
+    string OnnxPath,
+    int InputSize,
+    double ConfidenceThreshold,
+    double IouThreshold,
+    string? Status,
+    string? BaseModel,
+    string? DatasetVersion,
+    DateTimeOffset? TrainedAt,
+    ModelMetrics? Metrics);
+
+/// <summary>Daftar model deteksi yang tersedia di server.</summary>
+public interface IModelCatalog
+{
+    IReadOnlyList<DetectionModel> List();
+
+    string DefaultModelName { get; }
+
+    /// <summary>Model dengan nama tersebut, atau model default jika <paramref name="name"/> kosong.</summary>
+    /// <exception cref="Exceptions.RequestValidationException">Nama model tidak dikenal.</exception>
+    DetectionModel Resolve(string? name);
+}
+
+/// <summary>Mendeteksi kardus pada foto dengan model tertentu.</summary>
 public interface ICartonDetector
 {
-    Task<IReadOnlyList<CartonBox>> DetectAsync(VisionImage image, CancellationToken cancellationToken);
+    Task<IReadOnlyList<CartonBox>> DetectAsync(VisionImage image, DetectionModel model, CancellationToken cancellationToken);
 }
 
 /// <summary>Satu potongan teks hasil OCR.</summary>

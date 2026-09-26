@@ -1,5 +1,6 @@
 # Stack Inspection API — image Linux x64 (dipakai Coolify / server dev).
-# Model TIDAK ikut di image: pasang file carton-vN.onnx lewat volume ke /app/models.
+# Model TIDAK ikut di image: pasang folder model lewat volume ke /app/models
+# (satu subfolder per model: <nama>/<nama>.onnx + model-card.json).
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
@@ -21,7 +22,7 @@ RUN mkdir -p /app/models && chown app:app /app/models
 ENV ASPNETCORE_URLS=http://+:8080 \
     ASPNETCORE_ENVIRONMENT=Production \
     DOTNET_CLI_TELEMETRY_OPTOUT=1 \
-    Vision__DetectorModelPath=/app/models/carton-v1.onnx
+    Vision__ModelsDirectory=/app/models
 EXPOSE 8080
 VOLUME /app/models
 USER app

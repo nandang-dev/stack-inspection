@@ -78,6 +78,9 @@ public sealed class CollectSkuResponse
     /// <summary>ID inspeksi (dibuat server, dipakai lagi di Analyze).</summary>
     public Guid InspectionId { get; init; }
 
+    /// <summary>Nama model deteksi yang dipakai (lihat <c>GET /api/v1/models</c>).</summary>
+    public string Model { get; init; } = string.Empty;
+
     /// <summary>Lebar foto (piksel).</summary>
     public int ImageWidth { get; init; }
 
