@@ -81,7 +81,9 @@ diuji terhadap nilai referensi Python Carton Trainer.
 
 ## Publish
 
-Runtime native dipilih otomatis sesuai target:
+Runtime native dipilih otomatis sesuai target (paket runtime ada di project Api dengan kondisi `RuntimeIdentifier`).
+Jika restore dijalankan terpisah, sertakan `-p:RuntimeIdentifier=<rid>`; tanpa itu library native tidak ikut dan API
+gagal dengan `Unable to load shared library 'paddle_inference_c'`.
 
 ```bash
 dotnet publish src/StackInspection.Api -c Release -r linux-x64 --self-contained false -o out/linux
