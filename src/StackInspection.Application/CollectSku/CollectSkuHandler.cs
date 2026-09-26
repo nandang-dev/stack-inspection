@@ -11,7 +11,7 @@ using StackInspection.Domain;
 namespace StackInspection.Application.CollectSku;
 
 /// <summary>Input endpoint Collect SKU.</summary>
-public sealed record CollectSkuCommand(ReadOnlyMemory<byte> Image, IReadOnlyList<string> CandidateSkus);
+public sealed record CollectSkuCommand(ReadOnlyMemory<byte> Image, IReadOnlyList<string> CandidateSkus, string? Model = null);
 
 /// <summary>Hasil baca SKU satu kardus.</summary>
 public sealed record SkuReading(string Sku, string? OcrText, double Confidence, ReadStatus Status);
@@ -28,6 +28,7 @@ public sealed class CollectSkuHandler
 
     private readonly IImageDecoder _decoder;
     private readonly ICartonDetector _detector;
+    private readonly IModelCatalog _models;
     private readonly ISkuLabelReader _reader;
     private readonly PhotoInspectabilityService _inspectability;
     private readonly VisionOptions _vision;
@@ -37,6 +38,7 @@ public sealed class CollectSkuHandler
     public CollectSkuHandler(
         IImageDecoder decoder,
         ICartonDetector detector,
+        IModelCatalog models,
         ISkuLabelReader reader,
         PhotoInspectabilityService inspectability,
         IOptions<VisionOptions> vision,
@@ -48,6 +50,7 @@ public sealed class CollectSkuHandler
         ArgumentNullException.ThrowIfNull(upload);
         _decoder = decoder;
         _detector = detector;
+        _models = models;
         _reader = reader;
         _inspectability = inspectability;
         _vision = vision.Value;
@@ -61,11 +64,12 @@ public sealed class CollectSkuHandler
         Stopwatch stopwatch = Stopwatch.StartNew();
         ValidateUpload(command.Image);
         string[] candidates = NormalizeCandidates(command.CandidateSkus);
+        DetectionModel model = _models.Resolve(command.Model);
 
         using VisionImage image = _decoder.Decode(command.Image);
         await _inspectability.EnsureInspectableAsync(image, cancellationToken).ConfigureAwait(false);
 
-        IReadOnlyList<CartonBox> detected = await _detector.DetectAsync(image, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<CartonBox> detected = await _detector.DetectAsync(image, model, cancellationToken).ConfigureAwait(false);
         FrontLayerResult front = FrontLayerFilter.Apply(detected, _frontLayer.MinWidthRatio, _frontLayer.MaxGapRatio);
         if (front.Kept.Count == 0)
         {
@@ -105,6 +109,7 @@ public sealed class CollectSkuHandler
         return new CollectSkuResponse
         {
             InspectionId = Guid.NewGuid(),
+            Model = model.Name,
             ImageWidth = image.Width,
             ImageHeight = image.Height,
             RowCount = layout.RowCount,

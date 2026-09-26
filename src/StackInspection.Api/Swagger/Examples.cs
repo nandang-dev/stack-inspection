@@ -13,6 +13,7 @@ internal static class ExampleData
     public static CollectSkuResponse Collect() => new()
     {
         InspectionId = InspectionId,
+        Model = "carton-v1",
         ImageWidth = 1920,
         ImageHeight = 3413,
         RowCount = 8,
@@ -127,4 +128,25 @@ internal sealed class AnalyzeStackResponseExample : IExamplesProvider<AnalyzeSta
         ],
         Stacks = [new StackSummaryDto { Column = 0, Height = 8, ViolationCount = 1 }],
     };
+}
+
+/// <summary>Contoh response 200 daftar model.</summary>
+internal sealed class ModelListExample : IExamplesProvider<IReadOnlyList<ModelInfoDto>>
+{
+    public IReadOnlyList<ModelInfoDto> GetExamples() =>
+    [
+        new ModelInfoDto
+        {
+            Name = "carton-v1",
+            IsDefault = true,
+            InputSize = 960,
+            ConfidenceThreshold = 0.5,
+            IouThreshold = 0.5,
+            Status = "candidate",
+            BaseModel = "yolox-tiny",
+            DatasetVersion = "ds-v1",
+            TrainedAt = new DateTimeOffset(2026, 9, 26, 19, 26, 17, TimeSpan.Zero),
+            Metrics = new ModelMetricsDto { Precision = 0.899, Recall = 0.787, Map50 = 0.814, Map50To95 = 0.603 },
+        },
+    ];
 }

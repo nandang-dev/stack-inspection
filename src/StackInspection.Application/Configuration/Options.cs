@@ -13,15 +13,27 @@ public sealed class VisionOptions
     /// <summary>File fixture untuk fake vision, relatif terhadap folder aplikasi.</summary>
     public string FakeFixturePath { get; set; } = "fixtures/reference-grid.json";
 
+    /// <summary>
+    /// Folder model deteksi di luar repo (absolut, atau relatif terhadap folder aplikasi). Setiap subfolder
+    /// berisi satu model: <c>&lt;nama&gt;/&lt;nama&gt;.onnx</c> + <c>model-card.json</c> hasil export Carton Trainer.
+    /// File model tidak di-commit.
+    /// </summary>
     [Required]
-    public string DetectorModelPath { get; set; } = "models/carton-v1.onnx";
+    public string ModelsDirectory { get; set; } = "models";
 
+    /// <summary>Model yang dipakai jika request tidak memilih model.</summary>
+    [Required]
+    public string DefaultModel { get; set; } = "carton-v1";
+
+    /// <summary>Default jika model-card.json tidak mencantumkan inputSize.</summary>
     [Range(320, 1920)]
     public int InputSize { get; set; } = 960;
 
+    /// <summary>Default jika model-card.json tidak mencantumkan recommendedThresholds.</summary>
     [Range(0.01, 0.99)]
     public double ConfidenceThreshold { get; set; } = 0.5;
 
+    /// <summary>Default jika model-card.json tidak mencantumkan recommendedThresholds.</summary>
     [Range(0.01, 0.99)]
     public double IouThreshold { get; set; } = 0.5;
 

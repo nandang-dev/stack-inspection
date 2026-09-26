@@ -72,6 +72,7 @@ public sealed class StackInspectionsApiTests : IClassFixture<StackInspectionsApi
         CollectSkuResponse? collect = await collectResponse.Content.ReadFromJsonAsync<CollectSkuResponse>(Json);
         Assert.NotNull(collect);
         Assert.Equal((48, 8, 6), (collect.Cells.Count, collect.RowCount, collect.ColumnCount));
+        Assert.Equal("fake-model", collect.Model);
         Assert.Equal(
             [("68140913", 21), ("68410975", 17), ("68582213", 10)],
             collect.DistinctSkus.Select(d => (d.Sku, d.Count)));
@@ -158,5 +159,43 @@ public sealed class StackInspectionsApiTests : IClassFixture<StackInspectionsApi
         Assert.NotNull(analyze?["responses"]?["200"]?["content"]?["application/json"]?["example"]);
         Assert.NotNull(analyze?["requestBody"]?["content"]?["application/json"]?["example"]);
         Assert.Contains("Collect SKU", swagger, StringComparison.Ordinal); // XML comment controller ikut tampil
+    }
+
+    [Fact]
+    public async Task Models_ListReturnsCatalogWithDefault()
+    {
+        using HttpClient client = _factory.CreateClient();
+
+        ModelInfoDto[]? models = await client.GetFromJsonAsync<ModelInfoDto[]>("/api/v1/models", Json);
+
+        ModelInfoDto model = Assert.Single(models!);
+        Assert.Equal(("fake-model", true), (model.Name, model.IsDefault));
+    }
+
+    [Fact]
+    public async Task Collect_UnknownModel_Returns400()
+    {
+        using HttpClient client = _factory.CreateClient();
+        using MultipartFormDataContent form = Upload(Jpeg);
+        form.Add(new StringContent("carton-v9"), "model");
+
+        using HttpResponseMessage response = await client.PostAsync("/api/v1/stack-inspections/collect-sku", form);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        JsonNode? problem = JsonNode.Parse(await response.Content.ReadAsStringAsync());
+        Assert.NotNull(problem?["errors"]?["model"]);
+    }
+
+    [Fact]
+    public async Task Swagger_ModelFieldIsDropdownOfAvailableModels()
+    {
+        using HttpClient client = _factory.CreateClient();
+
+        JsonNode? doc = JsonNode.Parse(await client.GetStringAsync("/swagger/v1/swagger.json"));
+        JsonNode? field = doc?["paths"]?["/api/v1/stack-inspections/collect-sku"]?["post"]?["requestBody"]?["content"]?["multipart/form-data"]?["schema"]?["properties"]?["model"];
+
+        Assert.Equal(["fake-model"], field?["enum"]?.AsArray().Select(n => n!.GetValue<string>()));
+        Assert.Equal("fake-model", field?["default"]?.GetValue<string>());
+        Assert.NotNull(doc?["paths"]?["/api/v1/models"]?["get"]?["responses"]?["200"]?["content"]?["application/json"]?["example"]);
     }
 }

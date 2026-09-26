@@ -78,10 +78,10 @@ public sealed class FakeImageDecoder(FakeVisionFixtureProvider provider) : IImag
         new FakeVisionImage(provider.Fixture.ImageWidth, provider.Fixture.ImageHeight);
 }
 
-/// <summary>Mengembalikan kardus dari fixture.</summary>
+/// <summary>Mengembalikan kardus dari fixture (model apa pun).</summary>
 public sealed class FakeCartonDetector(FakeVisionFixtureProvider provider) : ICartonDetector
 {
-    public Task<IReadOnlyList<CartonBox>> DetectAsync(VisionImage image, CancellationToken cancellationToken) =>
+    public Task<IReadOnlyList<CartonBox>> DetectAsync(VisionImage image, DetectionModel model, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<CartonBox>>([.. provider.Fixture.Cartons.Select(c => new CartonBox(c.ToBox(), c.Confidence))]);
 }
 
@@ -114,4 +114,35 @@ public sealed class FakeTextSpotter(FakeVisionFixtureProvider provider) : ITextS
 {
     public Task<IReadOnlyList<OcrText>> SpotAsync(VisionImage image, BoundingBox region, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<OcrText>>([.. provider.Fixture.OverlayTexts.Select(t => new OcrText(t, 0.99))]);
+}
+
+/// <summary>Katalog berisi satu model palsu (dan model default dari konfigurasi).</summary>
+public sealed class FakeModelCatalog : IModelCatalog
+{
+    public const string FakeModelName = "fake-model";
+
+    private readonly IReadOnlyList<DetectionModel> _models;
+
+    public FakeModelCatalog(IOptions<VisionOptions> options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        VisionOptions vision = options.Value;
+        DefaultModelName = FakeModelName;
+        _models =
+        [
+            new DetectionModel(FakeModelName, "fake.onnx", vision.InputSize, vision.ConfidenceThreshold, vision.IouThreshold,
+                "candidate", "yolox-tiny", "ds-fake", null, new ModelMetrics(0.9, 0.8, 0.85, 0.6)),
+        ];
+    }
+
+    public string DefaultModelName { get; }
+
+    public IReadOnlyList<DetectionModel> List() => _models;
+
+    public DetectionModel Resolve(string? name)
+    {
+        string wanted = string.IsNullOrWhiteSpace(name) ? DefaultModelName : name.Trim();
+        return _models.FirstOrDefault(m => m.Name == wanted)
+            ?? throw new Application.Exceptions.RequestValidationException("model", $"Model '{wanted}' tidak ditemukan. Model tersedia: {FakeModelName}.");
+    }
 }

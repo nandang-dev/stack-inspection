@@ -24,10 +24,16 @@ public static class DependencyInjection
         services.AddSingleton<FakeCartonDetector>();
         services.AddSingleton<FakeSkuLabelReader>();
         services.AddSingleton<FakeTextSpotter>();
+        services.AddSingleton<FakeModelCatalog>();
 
         services.AddSingleton<OpenCvImageDecoder>();
         services.AddSingleton<OnnxCartonDetector>();
         services.AddSingleton<PaddleOcrTextReader>();
+        services.AddSingleton<FileSystemModelCatalog>();
+
+        services.AddSingleton<IModelCatalog>(sp => UseFake(sp)
+            ? sp.GetRequiredService<FakeModelCatalog>()
+            : sp.GetRequiredService<FileSystemModelCatalog>());
 
         services.AddSingleton<IImageDecoder>(sp => UseFake(sp)
             ? sp.GetRequiredService<FakeImageDecoder>()

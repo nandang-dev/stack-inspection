@@ -64,6 +64,8 @@ export interface DistinctSkuDto {
 
 export interface CollectSkuResponse {
   inspectionId: string;
+  /** Nama model deteksi yang dipakai (lihat GET /api/v1/models). */
+  model: string;
   imageWidth: number;
   imageHeight: number;
   rowCount: number;
@@ -125,6 +127,37 @@ export interface AnalyzeStackResponse {
   violations: ViolationDto[];
   skuSummary: SkuSummaryDto[];
   stacks: StackSummaryDto[];
+}
+
+export interface ModelMetricsDto {
+  precision: number;
+  recall: number;
+  map50: number;
+  map50To95: number;
+}
+
+/** Item GET /api/v1/models. */
+export interface ModelInfoDto {
+  /** Nama model, dipakai di field form `model` Collect SKU. */
+  name: string;
+  isDefault: boolean;
+  inputSize: number;
+  confidenceThreshold: number;
+  iouThreshold: number;
+  /** 'candidate' | 'approved' | 'rejected' dari Carton Trainer; null jika tanpa model card. */
+  status: string | null;
+  baseModel: string | null;
+  datasetVersion: string | null;
+  trainedAt: string | null;
+  metrics: ModelMetricsDto | null;
+}
+
+/** Field form multipart Collect SKU. */
+export interface CollectSkuForm {
+  image: File;
+  candidateSkus?: string[];
+  /** Kosong = model default. */
+  model?: string;
 }
 
 /** Body error 422 (ProblemDetails). */
