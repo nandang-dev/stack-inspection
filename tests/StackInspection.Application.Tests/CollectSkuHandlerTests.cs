@@ -134,7 +134,8 @@ public class CollectSkuHandlerTests
         Assert.Null(byColumn[3].OcrText);
         Assert.Contains(CollectWarnings.UnknownSkuPresent, result.Warnings);
         Assert.Contains(CollectWarnings.LabelNotVisiblePresent, result.Warnings);
-        Assert.Contains(Build.Label(corrected), reader.Requests); // area label dibaca dulu
+        Assert.Equal(1, reader.Calls); // OCR sekali untuk semua kardus
+        Assert.Equal(4, reader.LastRegions.Count);
     }
 
     [Fact]
@@ -155,6 +156,20 @@ public class CollectSkuHandlerTests
 
         Assert.Equal((2, 1), (result.Cells.Count, result.ExcludedBackLayerCount));
         Assert.Contains(CollectWarnings.BackLayerExcluded, result.Warnings);
+    }
+
+    [Fact]
+    public async Task NestedDuplicateBox_IsRemoved()
+    {
+        CartonBox carton = Build.Carton(300, 600);
+        CartonBox nested = new(new BoundingBox(320, 620, 520, 800), 0.7); // kotak ganda di dalam kardus
+        Dictionary<BoundingBox, (string?, string?)> texts = new() { [carton.Box] = ("68140913", null) };
+        CollectSkuHandler handler = Build.Handler(new StubDecoder(3000, 4000), new StubDetector([carton, nested]), new StubReader(texts));
+
+        CollectSkuResponse result = await handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None);
+
+        CellDto cell = Assert.Single(result.Cells);
+        Assert.Equal(("68140913", 300), (cell.Sku, cell.BoundingBox.X1));
     }
 
     [Fact]

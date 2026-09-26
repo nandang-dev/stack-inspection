@@ -157,3 +157,102 @@ public class FrontLayerFilterTests
         Assert.Equal((2, 2), (result.Kept.Count, result.ExcludedCount));
     }
 }
+
+public class StackBuilderTests
+{
+    [Fact]
+    public void NarrowSidewaysColumnsNextToWideColumns_AreNotMerged()
+    {
+        // kolom lebar (240 px) di x=0, dua kolom sempit menyamping (130 px) di x=250 dan x=390,
+        // kolom lebar lagi di x=530; pusat kolom sempit berdekatan dengan kolom lebar
+        List<BoundingBox> boxes = [];
+        for (int level = 0; level < 5; level++)
+        {
+            double y1 = 1000 - ((level + 1) * 100);
+            boxes.Add(new BoundingBox(0, y1, 240, y1 + 95));
+            boxes.Add(new BoundingBox(250, y1, 380, y1 + 95));
+            boxes.Add(new BoundingBox(390, y1, 520, y1 + 95));
+            boxes.Add(new BoundingBox(530, y1, 770, y1 + 95));
+        }
+
+        StackAssignment result = StackBuilder.Assign(boxes);
+
+        Assert.Equal(4, result.BottomToTopPerColumn.Count);
+        Assert.All(result.BottomToTopPerColumn, column => Assert.Equal(5, column.Count));
+        for (int i = 0; i < boxes.Count; i++)
+        {
+            Assert.Equal(i % 4, result.Columns[i]);
+        }
+
+        Assert.False(result.IsIrregular);
+    }
+
+    [Fact]
+    public void ShiftedCartonAbove_StaysInItsStack()
+    {
+        // kardus atas bergeser 40% ke kanan, masih menumpu di kardus bawahnya
+        BoundingBox[] boxes = [new(0, 100, 100, 200), new(40, 0, 140, 100), new(110, 100, 210, 200)];
+
+        StackAssignment result = StackBuilder.Assign(boxes);
+
+        Assert.Equal(result.Columns[0], result.Columns[1]);
+        Assert.NotEqual(result.Columns[0], result.Columns[2]);
+        Assert.False(result.IsIrregular);
+    }
+
+    [Fact]
+    public void CartonStraddlingTwoStacks_IsIrregular()
+    {
+        // kardus atas tepat di tengah dua kardus bawah (tumpukan silang)
+        BoundingBox[] boxes = [new(0, 100, 100, 200), new(100, 100, 200, 200), new(50, 0, 150, 100)];
+
+        StackAssignment result = StackBuilder.Assign(boxes);
+
+        Assert.True(result.IsIrregular);
+        Assert.Equal(2, result.BottomToTopPerColumn.Count);
+    }
+
+    [Fact]
+    public void BoxWithoutSupport_StartsNewColumn()
+    {
+        BoundingBox[] boxes = [new(0, 100, 100, 200), new(300, 0, 400, 100)];
+
+        StackAssignment result = StackBuilder.Assign(boxes);
+
+        Assert.Equal(2, result.BottomToTopPerColumn.Count);
+    }
+}
+
+public class ContainmentFilterTests
+{
+    [Fact]
+    public void NestedLowerConfidenceBox_IsRemoved()
+    {
+        CartonBox outer = new(new BoundingBox(0, 0, 200, 200), 0.9);
+        CartonBox inner = new(new BoundingBox(10, 10, 110, 90), 0.7); // IoU kecil, tapi 100% di dalam
+        CartonBox neighbour = new(new BoundingBox(210, 0, 400, 200), 0.8);
+
+        IReadOnlyList<CartonBox> kept = ContainmentFilter.Apply([outer, inner, neighbour], 0.8);
+
+        Assert.Equal([outer, neighbour], kept);
+    }
+
+    [Fact]
+    public void HigherConfidenceInnerBox_IsKeptInstead()
+    {
+        CartonBox outer = new(new BoundingBox(0, 0, 200, 200), 0.6);
+        CartonBox inner = new(new BoundingBox(10, 10, 190, 190), 0.9);
+
+        Assert.Equal([inner], ContainmentFilter.Apply([outer, inner], 0.8));
+    }
+
+    [Fact]
+    public void PartialOverlapAndDisabledThreshold_KeepAll()
+    {
+        CartonBox a = new(new BoundingBox(0, 0, 100, 100), 0.9);
+        CartonBox b = new(new BoundingBox(50, 0, 150, 100), 0.8); // 50% di dalam
+
+        Assert.Equal(2, ContainmentFilter.Apply([a, b], 0.8).Count);
+        Assert.Equal(2, ContainmentFilter.Apply([a, new CartonBox(new BoundingBox(10, 10, 20, 20), 0.5)], 0).Count);
+    }
+}

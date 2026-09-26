@@ -86,27 +86,33 @@ public sealed class FakeCartonDetector(FakeVisionFixtureProvider provider) : ICa
 }
 
 /// <summary>
-/// Mengembalikan teks label kardus yang memuat pusat area yang diminta. Area lebih kecil dari
-/// kardus = area label (<see cref="FakeCarton.LabelText"/>), selain itu seluruh kardus (<see cref="FakeCarton.BoxText"/>).
+/// Mengembalikan teks setiap kardus fixture beserta posisinya: <see cref="FakeCarton.LabelText"/> di pojok
+/// kiri atas (area label), <see cref="FakeCarton.BoxText"/> di bagian bawah kardus.
 /// </summary>
 public sealed class FakeSkuLabelReader(FakeVisionFixtureProvider provider) : ISkuLabelReader
 {
-    public Task<IReadOnlyList<OcrText>> ReadAsync(VisionImage image, BoundingBox region, CancellationToken cancellationToken)
+    public Task<IReadOnlyList<OcrText>> ReadAllAsync(VisionImage image, IReadOnlyList<BoundingBox> regions, CancellationToken cancellationToken)
     {
-        FakeCarton? carton = provider.Fixture.Cartons.FirstOrDefault(c =>
+        List<OcrText> texts = [];
+        foreach (FakeCarton carton in provider.Fixture.Cartons)
         {
-            BoundingBox box = c.ToBox();
-            return region.X1 >= box.X1 - 1 && region.Y1 >= box.Y1 - 1 && region.X2 <= box.X2 + 1 && region.Y2 <= box.Y2 + 1;
-        });
-        if (carton is null)
-        {
-            return Task.FromResult<IReadOnlyList<OcrText>>([]);
+            BoundingBox box = carton.ToBox();
+            if (carton.LabelText is not null)
+            {
+                texts.Add(new OcrText(carton.LabelText, carton.LabelConfidence, Part(box, 0.05, 0.05, 0.4, 0.15)));
+            }
+
+            if (carton.BoxText is not null)
+            {
+                texts.Add(new OcrText(carton.BoxText, carton.LabelConfidence, Part(box, 0.2, 0.7, 0.8, 0.8)));
+            }
         }
 
-        bool isLabelArea = region.Height < carton.ToBox().Height * 0.9;
-        string? text = isLabelArea ? carton.LabelText : carton.BoxText;
-        return Task.FromResult<IReadOnlyList<OcrText>>(text is null ? [] : [new OcrText(text, carton.LabelConfidence)]);
+        return Task.FromResult<IReadOnlyList<OcrText>>(texts);
     }
+
+    private static BoundingBox Part(BoundingBox box, double x1, double y1, double x2, double y2) =>
+        new(box.X1 + (box.Width * x1), box.Y1 + (box.Height * y1), box.X1 + (box.Width * x2), box.Y1 + (box.Height * y2));
 }
 
 /// <summary>Mengembalikan <see cref="FakeVisionFixture.OverlayTexts"/> untuk strip mana pun.</summary>
