@@ -1,0 +1,10 @@
+**/bin/
+**/obj/
+**/TestResults/
+.git/
+.vs/
+.idea/
+models/
+*.onnx
+**/appsettings.Development.json
+tests/

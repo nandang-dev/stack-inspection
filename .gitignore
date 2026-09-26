@@ -1,0 +1,19 @@
+# Build
+bin/
+obj/
+*.user
+.vs/
+.idea/
+TestResults/
+
+# Konfigurasi lokal (jangan di-commit)
+appsettings.Development.json
+appsettings.*.local.json
+.env
+
+# Model (dibaca dari konfigurasi, tidak di-commit)
+models/
+*.onnx
+
+# OS
+.DS_Store
