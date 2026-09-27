@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using StackInspection.Application.Abstractions;
 using StackInspection.Application.Configuration;
@@ -21,7 +22,7 @@ public sealed record SkuReading(string Sku, string? OcrText, double Confidence, 
 /// filter lapisan depan → OCR sekali untuk semua kardus → teks dicocokkan ke kardus berdasarkan posisi
 /// (area label dulu, fallback seluruh kardus) → fuzzy match → grid.
 /// </summary>
-public sealed class CollectSkuHandler
+public sealed partial class CollectSkuHandler
 {
     private const int MinSkuDigits = 7;
     private const int MaxSkuDigits = 9;
@@ -35,6 +36,7 @@ public sealed class CollectSkuHandler
     private readonly VisionOptions _vision;
     private readonly FrontLayerOptions _frontLayer;
     private readonly UploadOptions _upload;
+    private readonly ILogger<CollectSkuHandler> _logger;
 
     public CollectSkuHandler(
         IImageDecoder decoder,
@@ -44,7 +46,8 @@ public sealed class CollectSkuHandler
         PhotoInspectabilityService inspectability,
         IOptions<VisionOptions> vision,
         IOptions<FrontLayerOptions> frontLayer,
-        IOptions<UploadOptions> upload)
+        IOptions<UploadOptions> upload,
+        ILogger<CollectSkuHandler> logger)
     {
         ArgumentNullException.ThrowIfNull(vision);
         ArgumentNullException.ThrowIfNull(frontLayer);
@@ -57,6 +60,7 @@ public sealed class CollectSkuHandler
         _vision = vision.Value;
         _frontLayer = frontLayer.Value;
         _upload = upload.Value;
+        _logger = logger;
     }
 
     public async Task<CollectSkuResponse> HandleAsync(CollectSkuCommand command, CancellationToken cancellationToken)
@@ -68,11 +72,15 @@ public sealed class CollectSkuHandler
         DetectionModel model = _models.Resolve(command.Model);
 
         using VisionImage image = _decoder.Decode(command.Image);
+        long decodeMs = stopwatch.ElapsedMilliseconds;
         await _inspectability.EnsureInspectableAsync(image, cancellationToken).ConfigureAwait(false);
+        long inspectMs = stopwatch.ElapsedMilliseconds;
 
         IReadOnlyList<CartonBox> detected = await _detector.DetectAsync(image, model, cancellationToken).ConfigureAwait(false);
+        long detectMs = stopwatch.ElapsedMilliseconds;
         IReadOnlyList<CartonBox> distinct = ContainmentFilter.Apply(detected, _vision.ContainmentThreshold);
-        FrontLayerResult front = FrontLayerFilter.Apply(distinct, _frontLayer.MinWidthRatio, _frontLayer.MaxGapRatio);
+        FrontLayerResult front = FrontLayerFilter.Apply(
+            distinct, _frontLayer.MinWidthRatio, _frontLayer.MaxGapRatio, _frontLayer.MinTopHeightRatio);
         if (front.Kept.Count == 0)
         {
             throw new PhotoNotInspectableException(
@@ -84,6 +92,9 @@ public sealed class CollectSkuHandler
             .ReadAllAsync(image, [.. front.Kept.Select(c => c.Box)], cancellationToken)
             .ConfigureAwait(false);
         List<SkuReading> readings = [.. front.Kept.Select(c => ReadSku(c.Box, texts, candidates))];
+        long ocrMs = stopwatch.ElapsedMilliseconds;
+        LogTimings(
+            _logger, decodeMs, inspectMs - decodeMs, detectMs - inspectMs, ocrMs - detectMs, front.Kept.Count, texts.Count);
 
         GridLayout layout = GridBuilder.Build([.. front.Kept.Select(c => c.Box)]);
         List<CellDto> cells = [];
@@ -199,31 +210,31 @@ public sealed class CollectSkuHandler
         SkuReading? bestUnknown = null;
         SkuReading? bestMatch = null;
         int bestDistance = int.MaxValue;
-        foreach (OcrText text in texts.SelectMany(Variants))
+        foreach ((string candidate, string display, double confidence) in texts.SelectMany(Variants))
         {
-            int digits = SkuMatcher.NormalizeDigits(text.Text).Length;
+            int digits = SkuMatcher.NormalizeDigits(candidate).Length;
             if (digits is < MinSkuDigits or > MaxSkuDigits)
             {
                 continue;
             }
 
-            SkuMatch match = SkuMatcher.Match(text.Text, candidates, _vision.FuzzyMaxDistance);
+            SkuMatch match = SkuMatcher.Match(candidate, candidates, _vision.FuzzyMaxDistance);
             if (match.Status == ReadStatus.Unknown)
             {
-                if (bestUnknown is null || text.Confidence > bestUnknown.Confidence)
+                if (bestUnknown is null || confidence > bestUnknown.Confidence)
                 {
-                    bestUnknown = new SkuReading(SkuCodes.Unknown, text.Text, text.Confidence, ReadStatus.Unknown);
+                    bestUnknown = new SkuReading(SkuCodes.Unknown, display, confidence, ReadStatus.Unknown);
                 }
 
                 continue;
             }
 
             bool better = match.Distance < bestDistance
-                || (match.Distance == bestDistance && bestMatch is not null && text.Confidence > bestMatch.Confidence);
+                || (match.Distance == bestDistance && bestMatch is not null && confidence > bestMatch.Confidence);
             if (better)
             {
                 bestDistance = match.Distance;
-                bestMatch = new SkuReading(match.Sku, text.Text, text.Confidence, match.Status);
+                bestMatch = new SkuReading(match.Sku, display, confidence, match.Status);
             }
         }
 
@@ -232,19 +243,35 @@ public sealed class CollectSkuHandler
 
     /// <summary>
     /// Setiap kata dicoba sendiri (supaya "SKU 68582213" tidak ikut mengubah huruf S menjadi 5), lalu teks
-    /// utuh (untuk OCR yang memecah angka, misalnya "6841 0975").
+    /// utuh (untuk OCR yang memecah angka, misalnya "6841 0975"). <c>Display</c> = teks yang dilaporkan di
+    /// <c>ocrText</c> (kata asli hasil OCR, bukan hasil koreksi).
     /// </summary>
-    private static IEnumerable<OcrText> Variants(OcrText text)
+    private static IEnumerable<(string Candidate, string Display, double Confidence)> Variants(OcrText text)
     {
         string[] words = text.Text.Split(WordSeparators, StringSplitOptions.RemoveEmptyEntries);
         foreach (string word in words)
         {
-            yield return text with { Text = word };
+            yield return (word, word, text.Confidence);
+
+            // Garis kotak di sekitar nomor SKU sering terbaca sebagai "1" di awal/akhir ("657305541").
+            string digits = SkuMatcher.NormalizeDigits(word);
+            if (digits.Length == SkuMatcher.SkuLength + 1)
+            {
+                if (digits[0] == '1')
+                {
+                    yield return (digits[1..], word, text.Confidence);
+                }
+
+                if (digits[^1] == '1')
+                {
+                    yield return (digits[..^1], word, text.Confidence);
+                }
+            }
         }
 
         if (words.Length > 1)
         {
-            yield return text;
+            yield return (text.Text, text.Text, text.Confidence);
         }
     }
 
@@ -304,4 +331,10 @@ public sealed class CollectSkuHandler
 
         return warnings;
     }
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "Collect SKU timing: decode {DecodeMs} ms, inspect {InspectMs} ms, detect {DetectMs} ms, ocr {OcrMs} ms ({Cartons} kardus, {Texts} teks)")]
+    private static partial void LogTimings(
+        ILogger logger, long decodeMs, long inspectMs, long detectMs, long ocrMs, int cartons, int texts);
 }

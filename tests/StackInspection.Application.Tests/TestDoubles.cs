@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using StackInspection.Application.Abstractions;
 using StackInspection.Application.CollectSku;
@@ -110,6 +111,7 @@ internal static class Build
             inspectability,
             Options.Create(new VisionOptions()),
             Options.Create(new FrontLayerOptions()),
-            Options.Create(new UploadOptions { MaxFileSizeMb = maxFileMb }));
+            Options.Create(new UploadOptions { MaxFileSizeMb = maxFileMb }),
+            NullLogger<CollectSkuHandler>.Instance);
     }
 }

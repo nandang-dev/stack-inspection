@@ -144,6 +144,19 @@ public class FrontLayerFilterTests
     }
 
     [Fact]
+    public void ShortStripOnTopOfColumn_IsBackLayer()
+    {
+        // koordinat asli: bagian atas kardus belakang (tinggi 81) menyembul di atas kardus depan (tinggi 153)
+        CartonBox[] cartons = [Carton(761, 1143, 1002, 1298), Carton(819, 995, 1059, 1148), Carton(819, 916, 971, 997)];
+
+        FrontLayerResult result = FrontLayerFilter.Apply(cartons, 0.6, 0.35, 0.55);
+
+        Assert.Equal((2, 1), (result.Kept.Count, result.ExcludedCount));
+        Assert.DoesNotContain(result.Kept, c => c.Box.Y1 == 916);
+        Assert.Equal(0, FrontLayerFilter.Apply(cartons, 0.6, 0.35).ExcludedCount); // 0 = nonaktif
+    }
+
+    [Fact]
     public void BoxesAboveLargeGap_AreBackLayer()
     {
         // celah 60 px (> 0.35 × 80) antara tumpukan depan dan kardus di atasnya
