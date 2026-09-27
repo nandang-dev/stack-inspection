@@ -97,6 +97,10 @@ public sealed class FrontLayerOptions
 
     [Range(0.05, 2.0)]
     public double MaxGapRatio { get; set; } = 0.35;
+
+    /// <summary>Kotak teratas tumpukan yang tingginya &lt; rasio ini × kardus di bawahnya dianggap lapisan belakang (0 = nonaktif).</summary>
+    [Range(0.0, 1.0)]
+    public double MinTopHeightRatio { get; set; } = 0.55;
 }
 
 /// <summary>Batas upload (section <c>Upload</c>).</summary>

@@ -158,6 +158,20 @@ public class CollectSkuHandlerTests
         Assert.Contains(CollectWarnings.BackLayerExcluded, result.Warnings);
     }
 
+    [Theory]
+    [InlineData("657305541")] // garis kotak label terbaca "1" di belakang
+    [InlineData("165730554")] // ... atau di depan
+    public async Task LabelFrameReadAsOne_IsStripped(string ocr)
+    {
+        (List<CartonBox> cartons, Dictionary<BoundingBox, (string?, string?)> texts) = Grid(1, 1, ocr);
+        CollectSkuHandler handler = Build.Handler(new StubDecoder(3000, 4000), new StubDetector(cartons), new StubReader(texts));
+
+        CollectSkuResponse result = await handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None);
+
+        CellDto cell = Assert.Single(result.Cells);
+        Assert.Equal(("65730554", ReadStatus.Matched, ocr), (cell.Sku, cell.ReadStatus, cell.OcrText));
+    }
+
     [Fact]
     public async Task NestedDuplicateBox_IsRemoved()
     {
