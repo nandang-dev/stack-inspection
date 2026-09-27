@@ -49,6 +49,21 @@ public sealed class VisionOptions
     [Range(0, 4)]
     public int FuzzyMaxDistance { get; set; } = 2;
 
+    /// <summary>
+    /// Koreksi mayoritas (hanya jika <c>candidateSkus</c> kosong): SKU yang terbaca minimal sekian kali di foto
+    /// dianggap mayoritas. 0 = nonaktif.
+    /// </summary>
+    [Range(0, 100)]
+    public int MajorityMinCount { get; set; } = 3;
+
+    /// <summary>SKU mayoritas harus muncul minimal sekian kali lipat dari SKU yang dikoreksi.</summary>
+    [Range(1, 100)]
+    public int MajorityDominance { get; set; } = 3;
+
+    /// <summary>Selisih digit maksimal agar hasil baca dikoreksi ke SKU mayoritas.</summary>
+    [Range(0, 4)]
+    public int MajorityMaxDistance { get; set; } = 1;
+
     [Range(0.0, 1.0)]
     public double LowConfidenceThreshold { get; set; } = 0.6;
 

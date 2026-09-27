@@ -107,7 +107,8 @@ public sealed class CollectSkuResponse
 
     /// <summary>
     /// Kode peringatan: <c>LOW_DETECTION_CONFIDENCE</c>, <c>UNKNOWN_SKU_PRESENT</c>,
-    /// <c>LABEL_NOT_VISIBLE_PRESENT</c>, <c>IRREGULAR_GRID</c>, <c>BACK_LAYER_EXCLUDED</c>.
+    /// <c>LABEL_NOT_VISIBLE_PRESENT</c>, <c>IRREGULAR_GRID</c>, <c>BACK_LAYER_EXCLUDED</c>,
+    /// <c>SKU_CORRECTED_BY_MAJORITY</c>.
     /// </summary>
     public IReadOnlyList<string> Warnings { get; init; } = [];
 
@@ -132,4 +133,9 @@ public static class CollectWarnings
 
     /// <summary>Ada kotak lapisan belakang yang dibuang.</summary>
     public const string BackLayerExcluded = "BACK_LAYER_EXCLUDED";
+
+    /// <summary>
+    /// Tanpa <c>candidateSkus</c>: ada hasil baca yang dikoreksi ke SKU mayoritas di foto (status <c>Corrected</c>).
+    /// </summary>
+    public const string SkuCorrectedByMajority = "SKU_CORRECTED_BY_MAJORITY";
 }

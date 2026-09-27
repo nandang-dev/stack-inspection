@@ -91,7 +91,20 @@ public sealed partial class CollectSkuHandler
         IReadOnlyList<OcrText> texts = await _reader
             .ReadAllAsync(image, [.. front.Kept.Select(c => c.Box)], cancellationToken)
             .ConfigureAwait(false);
-        List<SkuReading> readings = [.. front.Kept.Select(c => ReadSku(c.Box, texts, candidates))];
+        IReadOnlyList<SkuReading> readings = [.. front.Kept.Select(c => ReadSku(c.Box, texts, candidates))];
+        bool majorityCorrected = false;
+        if (candidates.Length == 0)
+        {
+            // Tanpa candidateSkus (master SKU): koreksi salah baca ke SKU mayoritas di foto yang sama.
+            IReadOnlyList<SkuReading> corrected = MajorityCorrection.Apply(
+                readings,
+                [.. front.Kept.Select(c => DigitVariants(c.Box, texts))],
+                _vision.MajorityMinCount,
+                _vision.MajorityDominance,
+                _vision.MajorityMaxDistance);
+            majorityCorrected = corrected.Where((r, i) => r != readings[i]).Any();
+            readings = corrected;
+        }
         long ocrMs = stopwatch.ElapsedMilliseconds;
         LogTimings(
             _logger, decodeMs, inspectMs - decodeMs, detectMs - inspectMs, ocrMs - detectMs, front.Kept.Count, texts.Count);
@@ -130,7 +143,7 @@ public sealed partial class CollectSkuHandler
             Cells = cells,
             Stacks = BuildStacks(cells),
             DistinctSkus = BuildDistinct(cells),
-            Warnings = BuildWarnings(front, layout, cells),
+            Warnings = BuildWarnings(front, layout, cells, majorityCorrected),
             ProcessingTimeMs = stopwatch.ElapsedMilliseconds,
         };
     }
@@ -197,6 +210,15 @@ public sealed partial class CollectSkuHandler
         // Ada teks digit tapi tidak bisa dipastikan → UNKNOWN; tidak ada sama sekali → LABEL_NOT_VISIBLE.
         return fromLabel ?? fromBox ?? new SkuReading(SkuCodes.LabelNotVisible, null, 0, ReadStatus.LabelNotVisible);
     }
+
+    /// <summary>Semua string digit 7–9 karakter dari teks di dalam kardus (termasuk varian per kata).</summary>
+    private static IReadOnlyList<string> DigitVariants(BoundingBox box, IReadOnlyList<OcrText> texts) =>
+        [.. texts
+            .Where(t => t.Box is BoundingBox position && Contains(box, position.CenterX, position.CenterY))
+            .SelectMany(Variants)
+            .Select(v => SkuMatcher.NormalizeDigits(v.Candidate))
+            .Where(d => d.Length is >= MinSkuDigits and <= MaxSkuDigits)
+            .Distinct(StringComparer.Ordinal)];
 
     private static bool Contains(BoundingBox box, double x, double y) =>
         x >= box.X1 && x <= box.X2 && y >= box.Y1 && y <= box.Y2;
@@ -301,7 +323,7 @@ public sealed partial class CollectSkuHandler
             .OrderByDescending(d => d.Count)
             .ThenBy(d => d.Sku, StringComparer.Ordinal)];
 
-    private List<string> BuildWarnings(FrontLayerResult front, GridLayout layout, List<CellDto> cells)
+    private List<string> BuildWarnings(FrontLayerResult front, GridLayout layout, List<CellDto> cells, bool majorityCorrected)
     {
         List<string> warnings = [];
         if (front.Kept.Any(c => c.Confidence < _vision.LowConfidenceThreshold))
@@ -327,6 +349,11 @@ public sealed partial class CollectSkuHandler
         if (front.ExcludedCount > 0)
         {
             warnings.Add(CollectWarnings.BackLayerExcluded);
+        }
+
+        if (majorityCorrected)
+        {
+            warnings.Add(CollectWarnings.SkuCorrectedByMajority);
         }
 
         return warnings;
