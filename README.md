@@ -43,7 +43,8 @@ tidak di-commit) cukup untuk development. Vision asli diuji di Linux (Docker) da
 | `Vision:ModelsDirectory` | `models` (Docker: `/app/models`) | Folder model **di luar repo**, satu subfolder per model |
 | `Vision:DefaultModel` | `carton-v1` | Model jika request tidak memilih `model` |
 | `Vision:InputSize` / `ConfidenceThreshold` / `IouThreshold` | 960 / 0.5 / 0.5 | Default jika `model-card.json` tidak mencantumkannya |
-| `Vision:Threads` | 4 | Thread ONNX Runtime |
+| `Vision:Threads` | 4 | Thread ONNX Runtime dan PaddleOCR (samakan dengan jumlah vCPU) |
+| `Vision:ContainmentThreshold` | 0.8 | Kotak yang ≥80% luasnya berada di dalam kotak lain dibuang sebagai duplikat (0 = nonaktif) |
 | `Photo:MinLongSide` | 3000 | Gate resolusi (sisi terpanjang, px) |
 | `Photo:OverlayKeywords` | GPS Map Camera, Timemark, Lat, Long, Kode Foto | Gate stempel kamera |
 | `FrontLayer:MinWidthRatio` / `MaxGapRatio` | 0.6 / 0.35 | Filter lapisan belakang |

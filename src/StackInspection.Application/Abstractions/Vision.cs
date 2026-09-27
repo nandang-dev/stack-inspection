@@ -70,13 +70,16 @@ public interface ICartonDetector
     Task<IReadOnlyList<CartonBox>> DetectAsync(VisionImage image, DetectionModel model, CancellationToken cancellationToken);
 }
 
-/// <summary>Satu potongan teks hasil OCR.</summary>
-public sealed record OcrText(string Text, double Confidence);
+/// <summary>Satu potongan teks hasil OCR. <paramref name="Box"/> = posisi teks di foto (null jika tidak diketahui).</summary>
+public sealed record OcrText(string Text, double Confidence, BoundingBox? Box = null);
 
-/// <summary>Membaca teks (label SKU) pada area tertentu dari foto resolusi asli.</summary>
+/// <summary>
+/// Membaca semua teks di dalam area-area kardus dari foto resolusi asli dalam satu kali proses.
+/// Setiap hasil wajib membawa <see cref="OcrText.Box"/> supaya bisa dicocokkan ke kardusnya.
+/// </summary>
 public interface ISkuLabelReader
 {
-    Task<IReadOnlyList<OcrText>> ReadAsync(VisionImage image, BoundingBox region, CancellationToken cancellationToken);
+    Task<IReadOnlyList<OcrText>> ReadAllAsync(VisionImage image, IReadOnlyList<BoundingBox> regions, CancellationToken cancellationToken);
 }
 
 /// <summary>Mencari teks pada area foto (dipakai untuk mendeteksi stempel aplikasi kamera).</summary>

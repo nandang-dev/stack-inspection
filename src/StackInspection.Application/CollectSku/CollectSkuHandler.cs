@@ -17,8 +17,9 @@ public sealed record CollectSkuCommand(ReadOnlyMemory<byte> Image, IReadOnlyList
 public sealed record SkuReading(string Sku, string? OcrText, double Confidence, ReadStatus Status);
 
 /// <summary>
-/// Pipeline Collect SKU: validasi upload → decode → photo gate → deteksi → filter lapisan depan →
-/// OCR label (fallback seluruh kardus) → fuzzy match → grid.
+/// Pipeline Collect SKU: validasi upload → decode → photo gate → deteksi → buang kotak bersarang →
+/// filter lapisan depan → OCR sekali untuk semua kardus → teks dicocokkan ke kardus berdasarkan posisi
+/// (area label dulu, fallback seluruh kardus) → fuzzy match → grid.
 /// </summary>
 public sealed class CollectSkuHandler
 {
@@ -70,7 +71,8 @@ public sealed class CollectSkuHandler
         await _inspectability.EnsureInspectableAsync(image, cancellationToken).ConfigureAwait(false);
 
         IReadOnlyList<CartonBox> detected = await _detector.DetectAsync(image, model, cancellationToken).ConfigureAwait(false);
-        FrontLayerResult front = FrontLayerFilter.Apply(detected, _frontLayer.MinWidthRatio, _frontLayer.MaxGapRatio);
+        IReadOnlyList<CartonBox> distinct = ContainmentFilter.Apply(detected, _vision.ContainmentThreshold);
+        FrontLayerResult front = FrontLayerFilter.Apply(distinct, _frontLayer.MinWidthRatio, _frontLayer.MaxGapRatio);
         if (front.Kept.Count == 0)
         {
             throw new PhotoNotInspectableException(
@@ -78,11 +80,10 @@ public sealed class CollectSkuHandler
                 "Tidak ada kardus yang terdeteksi di lapisan depan foto.");
         }
 
-        List<SkuReading> readings = new(front.Kept.Count);
-        foreach (CartonBox carton in front.Kept)
-        {
-            readings.Add(await ReadSkuAsync(image, carton.Box, candidates, cancellationToken).ConfigureAwait(false));
-        }
+        IReadOnlyList<OcrText> texts = await _reader
+            .ReadAllAsync(image, [.. front.Kept.Select(c => c.Box)], cancellationToken)
+            .ConfigureAwait(false);
+        List<SkuReading> readings = [.. front.Kept.Select(c => ReadSku(c.Box, texts, candidates))];
 
         GridLayout layout = GridBuilder.Build([.. front.Kept.Select(c => c.Box)]);
         List<CellDto> cells = [];
@@ -152,18 +153,30 @@ public sealed class CollectSkuHandler
     public static BoundingBox LabelRegion(BoundingBox box, double widthRatio, double heightRatio) =>
         new(box.X1, box.Y1, box.X1 + (box.Width * widthRatio), box.Y1 + (box.Height * heightRatio));
 
-    private async Task<SkuReading> ReadSkuAsync(
-        VisionImage image, BoundingBox box, string[] candidates, CancellationToken cancellationToken)
+    /// <summary>
+    /// Teks yang titik tengahnya di area label dipakai lebih dulu; teks lain di dalam kardus sebagai fallback.
+    /// </summary>
+    private SkuReading ReadSku(BoundingBox box, IReadOnlyList<OcrText> texts, string[] candidates)
     {
         BoundingBox label = LabelRegion(box, _vision.LabelCropWidthRatio, _vision.LabelCropHeightRatio);
-        IReadOnlyList<OcrText> labelTexts = await _reader.ReadAsync(image, label, cancellationToken).ConfigureAwait(false);
+        List<OcrText> labelTexts = [];
+        List<OcrText> boxTexts = [];
+        foreach (OcrText text in texts)
+        {
+            if (text.Box is not BoundingBox position || !Contains(box, position.CenterX, position.CenterY))
+            {
+                continue;
+            }
+
+            (Contains(label, position.CenterX, position.CenterY) ? labelTexts : boxTexts).Add(text);
+        }
+
         SkuReading? fromLabel = Resolve(labelTexts, candidates);
         if (fromLabel is { Status: ReadStatus.Matched or ReadStatus.Corrected })
         {
             return fromLabel;
         }
 
-        IReadOnlyList<OcrText> boxTexts = await _reader.ReadAsync(image, box, cancellationToken).ConfigureAwait(false);
         SkuReading? fromBox = Resolve(boxTexts, candidates);
         if (fromBox is { Status: ReadStatus.Matched or ReadStatus.Corrected })
         {
@@ -173,6 +186,9 @@ public sealed class CollectSkuHandler
         // Ada teks digit tapi tidak bisa dipastikan → UNKNOWN; tidak ada sama sekali → LABEL_NOT_VISIBLE.
         return fromLabel ?? fromBox ?? new SkuReading(SkuCodes.LabelNotVisible, null, 0, ReadStatus.LabelNotVisible);
     }
+
+    private static bool Contains(BoundingBox box, double x, double y) =>
+        x >= box.X1 && x <= box.X2 && y >= box.Y1 && y <= box.Y2;
 
     /// <summary>
     /// Memilih teks 7–9 digit terbaik. null = tidak ada teks digit sama sekali.

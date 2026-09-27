@@ -51,6 +51,13 @@ public sealed class VisionOptions
 
     [Range(0.0, 1.0)]
     public double LowConfidenceThreshold { get; set; } = 0.6;
+
+    /// <summary>
+    /// Kotak yang luasnya ≥ nilai ini berada di dalam kotak lain dianggap duplikat dan dibuang
+    /// (confidence lebih rendah). 0 = nonaktif.
+    /// </summary>
+    [Range(0.0, 1.0)]
+    public double ContainmentThreshold { get; set; } = 0.8;
 }
 
 /// <summary>Pemeriksaan kelayakan foto (section <c>Photo</c>).</summary>

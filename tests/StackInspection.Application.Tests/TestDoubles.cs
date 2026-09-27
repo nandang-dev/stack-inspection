@@ -45,28 +45,35 @@ internal sealed class StubCatalog : IModelCatalog
         ?? throw new Exceptions.RequestValidationException("model", "tidak ditemukan");
 }
 
-/// <summary>Teks per kardus: area label → <c>label</c>, seluruh kardus → <c>box</c>.</summary>
+/// <summary>
+/// Teks per kardus: <c>label</c> diletakkan di area label, <c>box</c> di bagian bawah kardus
+/// (di luar area label).
+/// </summary>
 internal sealed class StubReader(Dictionary<BoundingBox, (string? Label, string? Box)> texts) : ISkuLabelReader
 {
-    public List<BoundingBox> Requests { get; } = [];
+    public int Calls { get; private set; }
 
-    public Task<IReadOnlyList<OcrText>> ReadAsync(VisionImage image, BoundingBox region, CancellationToken cancellationToken)
+    public IReadOnlyList<BoundingBox> LastRegions { get; private set; } = [];
+
+    public Task<IReadOnlyList<OcrText>> ReadAllAsync(VisionImage image, IReadOnlyList<BoundingBox> regions, CancellationToken cancellationToken)
     {
-        Requests.Add(region);
+        Calls++;
+        LastRegions = regions;
+        List<OcrText> result = [];
         foreach ((BoundingBox box, (string? label, string? whole)) in texts)
         {
-            if (region == box)
+            if (label is not null)
             {
-                return Task.FromResult<IReadOnlyList<OcrText>>(whole is null ? [] : [new OcrText(whole, 0.9)]);
+                result.Add(new OcrText(label, 0.97, new BoundingBox(box.X1 + 10, box.Y1 + 10, box.X1 + 110, box.Y1 + 40)));
             }
 
-            if (region.X1 == box.X1 && region.Y1 == box.Y1 && region.Height < box.Height)
+            if (whole is not null)
             {
-                return Task.FromResult<IReadOnlyList<OcrText>>(label is null ? [] : [new OcrText(label, 0.97)]);
+                result.Add(new OcrText(whole, 0.9, new BoundingBox(box.X1 + 50, box.Y2 - 60, box.X2 - 50, box.Y2 - 20)));
             }
         }
 
-        return Task.FromResult<IReadOnlyList<OcrText>>([]);
+        return Task.FromResult<IReadOnlyList<OcrText>>(result);
     }
 }
 
@@ -105,6 +112,4 @@ internal static class Build
             Options.Create(new FrontLayerOptions()),
             Options.Create(new UploadOptions { MaxFileSizeMb = maxFileMb }));
     }
-
-    public static BoundingBox Label(CartonBox carton) => CollectSkuHandler.LabelRegion(carton.Box, 0.6, 0.3);
 }

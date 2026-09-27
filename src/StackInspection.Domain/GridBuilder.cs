@@ -11,8 +11,9 @@ public sealed record GridLayout(
     bool IsIrregular);
 
 /// <summary>
-/// Menyusun baris dan kolom dari koordinat kardus: kolom dikelompokkan berdasarkan kedekatan
-/// CenterX, baris berdasarkan CenterY, lalu level dihitung per kolom dari bawah (0 = paling bawah).
+/// Menyusun baris dan kolom dari koordinat kardus. Kolom disusun secara fisik dari bawah ke atas
+/// (<see cref="StackBuilder"/>), baris dikelompokkan berdasarkan CenterY, lalu level dihitung per
+/// kolom dari bawah (0 = paling bawah).
 /// </summary>
 public static class GridBuilder
 {
@@ -28,28 +29,17 @@ public static class GridBuilder
             return new GridLayout([], 0, 0, false);
         }
 
-        double meanWidth = boxes.Average(b => b.Width);
-        double meanHeight = boxes.Average(b => b.Height);
-        int[] columns = Cluster(boxes.Select(b => b.CenterX).ToArray(), ColumnToleranceRatio * meanWidth);
-        int[] rows = Cluster(boxes.Select(b => b.CenterY).ToArray(), RowToleranceRatio * meanHeight);
-
+        StackAssignment stacks = StackBuilder.Assign(boxes);
         int[] levels = new int[boxes.Count];
-        bool irregular = false;
-        foreach (IGrouping<int, int> column in Enumerable.Range(0, boxes.Count).GroupBy(i => columns[i]))
+        foreach (IReadOnlyList<int> column in stacks.BottomToTopPerColumn)
         {
-            List<int> bottomToTop = [.. column.OrderByDescending(i => boxes[i].CenterY)];
-            for (int level = 0; level < bottomToTop.Count; level++)
+            for (int level = 0; level < column.Count; level++)
             {
-                levels[bottomToTop[level]] = level;
-            }
-
-            // Dua kardus di baris yang sama dalam satu kolom = pengelompokan tidak konsisten.
-            if (bottomToTop.Select(i => rows[i]).Distinct().Count() != bottomToTop.Count)
-            {
-                irregular = true;
+                levels[column[level]] = level;
             }
         }
 
+        bool irregular = stacks.IsIrregular;
         double minWidth = boxes.Min(b => b.Width);
         double maxWidth = boxes.Max(b => b.Width);
         if (minWidth > 0 && maxWidth / minWidth > 2.0)
@@ -57,8 +47,8 @@ public static class GridBuilder
             irregular = true; // ukuran kardus sangat campur
         }
 
-        GridPosition[] positions = [.. Enumerable.Range(0, boxes.Count).Select(i => new GridPosition(rows[i], columns[i], levels[i]))];
-        return new GridLayout(positions, rows.Max() + 1, columns.Max() + 1, irregular);
+        GridPosition[] positions = [.. Enumerable.Range(0, boxes.Count).Select(i => new GridPosition(stacks.Rows[i], stacks.Columns[i], levels[i]))];
+        return new GridLayout(positions, stacks.Rows.Max() + 1, stacks.Columns.Max() + 1, irregular);
     }
 
     /// <summary>
