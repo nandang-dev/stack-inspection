@@ -8,15 +8,23 @@ public sealed record StackAssignment(
     bool IsIrregular);
 
 /// <summary>
-/// Menyusun kolom secara fisik dari bawah ke atas: setiap kardus ditempelkan ke kolom yang kardus
-/// teratasnya (di baris bawahnya) paling banyak tumpang tindih secara horizontal. Dengan cara ini kardus
-/// menyamping yang sempit dan kardus depan yang lebar tidak tercampur ke satu kolom seperti pada
-/// pengelompokan berdasarkan lebar rata-rata.
+/// Menyusun kolom secara fisik dari bawah ke atas: setiap kardus ditempelkan ke tumpukan yang kardus
+/// teratasnya berada di bawahnya dan paling banyak tumpang tindih secara horizontal. Tumpukan yang kardus
+/// teratasnya tepat di bawah (tanpa celah) diutamakan; tumpukan bercelah hanya dipakai jika tidak ada,
+/// sehingga filter lapisan belakang tetap bisa mendeteksi celah. Dengan cara ini kardus menyamping yang
+/// sempit dan kardus depan yang lebar tidak tercampur ke satu kolom seperti pada pengelompokan
+/// berdasarkan lebar rata-rata.
 /// </summary>
 public static class StackBuilder
 {
     /// <summary>Minimal tumpang tindih horizontal (terhadap kardus yang lebih sempit) agar dianggap satu tumpukan.</summary>
     public const double MinOverlapRatio = 0.5;
+
+    /// <summary>Kardus dianggap tepat di atas jika celahnya ≤ rasio ini × tinggi kardus di bawah.</summary>
+    public const double AdjacentGapRatio = 0.35;
+
+    /// <summary>Tumpang tindih vertikal maksimal (× tinggi kardus yang lebih pendek) agar masih dianggap di atas.</summary>
+    public const double MaxVerticalOverlapRatio = 0.5;
 
     private sealed class Stack
     {
@@ -38,63 +46,40 @@ public static class StackBuilder
         List<Stack> stacks = [];
         bool irregular = false;
 
-        foreach (IGrouping<int, int> row in Enumerable.Range(0, boxes.Count).GroupBy(i => rows[i]).OrderByDescending(g => g.Key))
+        foreach (int index in Enumerable.Range(0, boxes.Count).OrderByDescending(i => boxes[i].CenterY).ThenBy(i => boxes[i].X1))
         {
-            // Pasangan (kardus, tumpukan) diurutkan dari tumpang tindih terbesar; satu tumpukan hanya
-            // menerima satu kardus per baris.
-            List<(int Box, Stack Stack, double Overlap)> candidates = [];
-            foreach (int index in row)
+            BoundingBox box = boxes[index];
+            List<(Stack Stack, double Overlap, bool Adjacent)> candidates = [];
+            foreach (Stack stack in stacks)
             {
-                BoundingBox box = boxes[index];
-                int matches = 0;
-                foreach (Stack stack in stacks)
-                {
-                    double overlap = HorizontalOverlap(box, stack.Top);
-                    if (overlap >= MinOverlapRatio && stack.Top.CenterY > box.CenterY)
-                    {
-                        candidates.Add((index, stack, overlap));
-                        matches++;
-                    }
-                }
-
-                if (matches > 1)
-                {
-                    irregular = true; // satu kardus menumpu di atas dua tumpukan
-                }
-            }
-
-            HashSet<int> assigned = [];
-            HashSet<Stack> used = [];
-            List<(int Box, Stack Stack)> placements = [];
-            foreach ((int box, Stack stack, _) in candidates.OrderByDescending(c => c.Overlap).ThenBy(c => boxes[c.Box].X1))
-            {
-                if (assigned.Contains(box) || used.Contains(stack))
+                BoundingBox top = stack.Top;
+                double overlap = HorizontalOverlap(box, top);
+                if (overlap < MinOverlapRatio || !IsAbove(box, top))
                 {
                     continue;
                 }
 
-                assigned.Add(box);
-                used.Add(stack);
-                placements.Add((box, stack));
+                candidates.Add((stack, overlap, top.Y1 - box.Y2 <= AdjacentGapRatio * top.Height));
             }
 
-            foreach ((int box, Stack stack) in placements)
+            List<(Stack Stack, double Overlap, bool Adjacent)> adjacent = [.. candidates.Where(c => c.Adjacent)];
+            if (adjacent.Count > 1)
             {
-                stack.Members.Add(box);
-                stack.Top = boxes[box];
+                irregular = true; // satu kardus menumpu di atas dua tumpukan
             }
 
-            foreach (int index in row.Where(i => !assigned.Contains(i)).OrderBy(i => boxes[i].X1))
+            List<(Stack Stack, double Overlap, bool Adjacent)> pool = adjacent.Count > 0 ? adjacent : candidates;
+            if (pool.Count == 0)
             {
-                if (candidates.Any(c => c.Box == index))
-                {
-                    irregular = true; // kalah berebut tumpukan dengan kardus lain di baris yang sama
-                }
-
-                Stack created = new() { Top = boxes[index] };
+                Stack created = new() { Top = box };
                 created.Members.Add(index);
                 stacks.Add(created);
+                continue;
             }
+
+            Stack chosen = pool.OrderByDescending(c => c.Overlap).First().Stack;
+            chosen.Members.Add(index);
+            chosen.Top = box;
         }
 
         List<Stack> ordered = [.. stacks.OrderBy(s => s.Members.Average(i => boxes[i].CenterX))];
@@ -112,6 +97,11 @@ public static class StackBuilder
 
         return new StackAssignment(columns, rows, perColumn, irregular);
     }
+
+    /// <summary><paramref name="box"/> berada di atas <paramref name="below"/> (tumpang tindih vertikal kecil masih boleh).</summary>
+    private static bool IsAbove(BoundingBox box, BoundingBox below) =>
+        box.CenterY < below.CenterY
+        && box.Y2 - below.Y1 <= MaxVerticalOverlapRatio * Math.Min(box.Height, below.Height);
 
     /// <summary>Panjang tumpang tindih horizontal dibagi lebar kardus yang lebih sempit.</summary>
     public static double HorizontalOverlap(BoundingBox a, BoundingBox b)

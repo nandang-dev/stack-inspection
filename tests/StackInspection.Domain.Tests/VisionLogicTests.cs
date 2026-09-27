@@ -212,6 +212,35 @@ public class StackBuilderTests
         Assert.Equal(2, result.BottomToTopPerColumn.Count);
     }
 
+    /// <summary>Potongan koordinat asli foto truk: kardus menyamping di bawah, kardus depan lebih lebar di atasnya.</summary>
+    private static readonly BoundingBox[] TruckPhoto =
+    [
+        new(1, 2148, 126, 2268), new(3, 2038, 126, 2162), new(8, 1926, 133, 2042), new(7, 1818, 132, 1930),
+        new(19, 1711, 141, 1822), new(21, 1611, 148, 1720), new(32, 1439, 207, 1618), new(43, 1272, 222, 1449),
+        new(514, 1800, 650, 1922), new(641, 1797, 775, 1915), new(499, 1624, 694, 1806), new(683, 1619, 871, 1797),
+        new(557, 1448, 749, 1629), new(744, 1447, 934, 1623), new(576, 1296, 817, 1454),
+    ];
+
+    [Fact]
+    public void RealTruckPhoto_SidewaysCartonsStackedDirectly_FormOneColumn()
+    {
+        StackAssignment result = StackBuilder.Assign(TruckPhoto);
+
+        // kolom kiri: 6 kardus menyamping (termasuk dua yang CenterY-nya berdekatan) + 2 kardus depan
+        Assert.Contains(result.BottomToTopPerColumn, c => c.SequenceEqual([0, 1, 2, 3, 4, 5, 6, 7]));
+        // kardus depan diutamakan menumpu ke kardus yang tepat di bawahnya, bukan yang dua baris di bawah
+        Assert.Equal(result.Columns[10], result.Columns[12]);
+        Assert.Equal(result.Columns[12], result.Columns[14]);
+    }
+
+    [Fact]
+    public void RealTruckPhoto_NothingIsTreatedAsBackLayer()
+    {
+        CartonBox[] cartons = [.. TruckPhoto.Select(b => new CartonBox(b, 0.9))];
+
+        Assert.Equal(0, FrontLayerFilter.Apply(cartons, 0.6, 0.35).ExcludedCount);
+    }
+
     [Fact]
     public void BoxWithoutSupport_StartsNewColumn()
     {
