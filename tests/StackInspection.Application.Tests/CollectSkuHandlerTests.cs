@@ -173,6 +173,33 @@ public class CollectSkuHandlerTests
     }
 
     [Fact]
+    public async Task WithoutCandidates_MisreadIsCorrectedByMajority()
+    {
+        (List<CartonBox> cartons, Dictionary<BoundingBox, (string?, string?)> texts) = Grid(2, 2, "65730554");
+        texts[cartons[3].Box] = ("85730554", null);
+        CollectSkuHandler handler = Build.Handler(new StubDecoder(3000, 4000), new StubDetector(cartons), new StubReader(texts));
+
+        CollectSkuResponse result = await handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None);
+
+        CellDto misread = Assert.Single(result.Cells, c => c.OcrText == "85730554");
+        Assert.Equal(("65730554", ReadStatus.Corrected), (misread.Sku, misread.ReadStatus));
+        Assert.Contains(CollectWarnings.SkuCorrectedByMajority, result.Warnings);
+    }
+
+    [Fact]
+    public async Task WithCandidates_MajorityCorrectionIsNotUsed()
+    {
+        (List<CartonBox> cartons, Dictionary<BoundingBox, (string?, string?)> texts) = Grid(2, 2, "65730554");
+        texts[cartons[3].Box] = ("85730554", null);
+        CollectSkuHandler handler = Build.Handler(new StubDecoder(3000, 4000), new StubDetector(cartons), new StubReader(texts));
+
+        CollectSkuResponse result = await handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, ["65730554", "85730554"]), None);
+
+        Assert.Single(result.Cells, c => c.Sku == "85730554" && c.ReadStatus == ReadStatus.Matched);
+        Assert.DoesNotContain(CollectWarnings.SkuCorrectedByMajority, result.Warnings);
+    }
+
+    [Fact]
     public async Task NestedDuplicateBox_IsRemoved()
     {
         CartonBox carton = Build.Carton(300, 600);

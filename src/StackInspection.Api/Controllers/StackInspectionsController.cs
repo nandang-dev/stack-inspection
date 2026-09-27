@@ -29,7 +29,11 @@ public sealed class StackInspectionsController : ControllerBase
     /// <c>Photo:MinLongSide</c>, ada stempel aplikasi kamera, atau tidak ada kardus terdeteksi.
     /// </remarks>
     /// <param name="image">Foto JPG/PNG, maksimal <c>Upload:MaxFileSizeMb</c>.</param>
-    /// <param name="candidateSkus">Daftar kode SKU untuk fuzzy match (opsional, boleh dipisah koma).</param>
+    /// <param name="candidateSkus">
+    /// Daftar kode SKU untuk fuzzy match, disarankan <b>seluruh master SKU</b> (opsional, boleh dipisah koma).
+    /// Hasil OCR dikoreksi ke SKU terdekat di daftar ini. Jika kosong, salah baca dikoreksi ke SKU mayoritas
+    /// di foto yang sama dan response memuat warning <c>SKU_CORRECTED_BY_MAJORITY</c>.
+    /// </param>
     /// <param name="model">Model deteksi (opsional). Kosong = model default. Lihat <c>GET /api/v1/models</c>.</param>
     /// <param name="cancellationToken">Token pembatalan.</param>
     /// <response code="200">Hasil deteksi dan pembacaan SKU.</response>

@@ -18,7 +18,9 @@ export type CollectWarning =
   | 'UNKNOWN_SKU_PRESENT'
   | 'LABEL_NOT_VISIBLE_PRESENT'
   | 'IRREGULAR_GRID'
-  | 'BACK_LAYER_EXCLUDED';
+  | 'BACK_LAYER_EXCLUDED'
+  /** Tanpa candidateSkus: ada hasil baca yang dikoreksi ke SKU mayoritas di foto (readStatus 'Corrected'). */
+  | 'SKU_CORRECTED_BY_MAJORITY';
 
 export type PhotoRejectReason =
   | 'PHOTO_RESOLUTION_TOO_LOW'
@@ -155,6 +157,10 @@ export interface ModelInfoDto {
 /** Field form multipart Collect SKU. */
 export interface CollectSkuForm {
   image: File;
+  /**
+   * Daftar SKU untuk koreksi hasil OCR, disarankan seluruh master SKU. Jika kosong, API mengoreksi
+   * salah baca ke SKU mayoritas di foto (warning SKU_CORRECTED_BY_MAJORITY).
+   */
   candidateSkus?: string[];
   /** Kosong = model default. */
   model?: string;
