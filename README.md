@@ -48,6 +48,7 @@ tidak di-commit) cukup untuk development. Vision asli diuji di Linux (Docker) da
 | `Photo:MinLongSide` | 3000 | Gate resolusi (sisi terpanjang, px) |
 | `Photo:OverlayKeywords` | GPS Map Camera, Timemark, Lat, Long, Kode Foto | Gate stempel kamera |
 | `FrontLayer:MinWidthRatio` / `MaxGapRatio` | 0.6 / 0.35 | Filter lapisan belakang |
+| `FrontLayer:MinTopHeightRatio` | 0.55 | Kotak teratas tumpukan yang tingginya < rasio ini × kardus di bawahnya dianggap lapisan belakang (0 = nonaktif) |
 | `Upload:MaxFileSizeMb` | 10 | Batas upload |
 
 ## Folder model
