@@ -42,12 +42,14 @@ public class CollectSkuHandlerTests
         Assert.Empty(result.Warnings);
     }
 
-    [Fact]
-    public async Task LowResolution_IsRejectedBeforeDetection()
+    [Theory]
+    [InlineData(1600, 1200)] // sisi terpanjang < 2048
+    [InlineData(2048, 900)] // sisi terpanjang cukup, tapi 1.84 MP < 2 MP
+    public async Task LowResolution_IsRejectedBeforeDetection(int width, int height)
     {
         (List<CartonBox> cartons, Dictionary<BoundingBox, (string?, string?)> texts) = Grid(1, 1, "68140913");
         StubDetector detector = new(cartons);
-        CollectSkuHandler handler = Build.Handler(new StubDecoder(1920, 2560), detector, new StubReader(texts), new StubSpotter("GPS Map Camera", "Lat"));
+        CollectSkuHandler handler = Build.Handler(new StubDecoder(width, height), detector, new StubReader(texts), new StubSpotter("GPS Map Camera", "Lat"));
 
         PhotoNotInspectableException error = await Assert.ThrowsAsync<PhotoNotInspectableException>(
             () => handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None));
@@ -57,8 +59,9 @@ public class CollectSkuHandlerTests
     }
 
     [Theory]
-    [InlineData(3000, 2000)]
-    [InlineData(2000, 3000)]
+    [InlineData(2048, 1152)] // 2.36 MP
+    [InlineData(1152, 2048)]
+    [InlineData(1919, 3413)] // foto truk lapangan
     public async Task ResolutionAtLimit_IsAccepted(int width, int height)
     {
         (List<CartonBox> cartons, Dictionary<BoundingBox, (string?, string?)> texts) = Grid(1, 1, "68140913");

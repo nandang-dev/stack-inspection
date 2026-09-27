@@ -77,7 +77,7 @@ internal sealed class PhotoNotInspectableExample : IExamplesProvider<ProblemDeta
             Type = "https://planogram.local/problems/photo-not-inspectable",
             Title = "Foto tidak layak dinilai",
             Status = StatusCodes.Status422UnprocessableEntity,
-            Detail = "Resolusi foto 1920x2560 di bawah minimum (sisi terpanjang 3000 px).",
+            Detail = "Resolusi foto 1600x1200 (1.92 MP) di bawah minimum (sisi terpanjang 2048 px dan 2 MP).",
         };
         problem.Extensions["code"] = PhotoNotInspectableException.Code;
         problem.Extensions["reason"] = PhotoRejectReasons.ResolutionTooLow;

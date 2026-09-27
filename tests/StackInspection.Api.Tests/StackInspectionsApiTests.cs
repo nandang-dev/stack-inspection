@@ -114,7 +114,7 @@ public sealed class StackInspectionsApiTests : IClassFixture<StackInspectionsApi
     public async Task Collect_LowResolution_Returns422PhotoNotInspectable()
     {
         string fixture = Path.Combine(Path.GetTempPath(), $"lowres-{Guid.NewGuid():N}.json");
-        await File.WriteAllTextAsync(fixture, """{"imageWidth":1920,"imageHeight":2560,"overlayTexts":[],"cartons":[]}""");
+        await File.WriteAllTextAsync(fixture, """{"imageWidth":1600,"imageHeight":1200,"overlayTexts":[],"cartons":[]}""");
         using FakeVisionFactory lowRes = new() { FixturePath = fixture };
         using HttpClient client = lowRes.CreateClient();
 

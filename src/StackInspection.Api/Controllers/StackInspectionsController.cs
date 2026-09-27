@@ -26,7 +26,8 @@ public sealed class StackInspectionsController : ControllerBase
     /// <summary>Collect SKU: deteksi kardus lapisan depan, baca SKU, dan susun baris/kolom.</summary>
     /// <remarks>
     /// Foto ditolak dengan 422 <c>PHOTO_NOT_INSPECTABLE</c> jika resolusi sisi terpanjang di bawah
-    /// <c>Photo:MinLongSide</c>, ada stempel aplikasi kamera, atau tidak ada kardus terdeteksi.
+    /// <c>Photo:MinLongSide</c> atau jumlah piksel di bawah <c>Photo:MinMegapixels</c>, ada stempel aplikasi
+    /// kamera, atau tidak ada kardus terdeteksi.
     /// </remarks>
     /// <param name="image">Foto JPG/PNG, maksimal <c>Upload:MaxFileSizeMb</c>.</param>
     /// <param name="candidateSkus">

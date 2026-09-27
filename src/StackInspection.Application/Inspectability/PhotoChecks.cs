@@ -15,7 +15,7 @@ public interface IPhotoInspectabilityCheck
     Task CheckAsync(VisionImage image, CancellationToken cancellationToken);
 }
 
-/// <summary>Gate 1: sisi terpanjang harus ≥ Photo:MinLongSide.</summary>
+/// <summary>Gate 1: sisi terpanjang ≥ Photo:MinLongSide <b>dan</b> jumlah piksel ≥ Photo:MinMegapixels.</summary>
 public sealed class ResolutionCheck : IPhotoInspectabilityCheck
 {
     private readonly PhotoOptions _options;
@@ -32,11 +32,14 @@ public sealed class ResolutionCheck : IPhotoInspectabilityCheck
     {
         ArgumentNullException.ThrowIfNull(image);
         int longSide = Math.Max(image.Width, image.Height);
-        if (longSide < _options.MinLongSide)
+        double megapixels = (double)image.Width * image.Height / 1_000_000;
+        if (longSide < _options.MinLongSide || megapixels < _options.MinMegapixels)
         {
             throw new PhotoNotInspectableException(
                 PhotoRejectReasons.ResolutionTooLow,
-                $"Resolusi foto {image.Width}x{image.Height} di bawah minimum (sisi terpanjang {_options.MinLongSide} px).");
+                string.Create(
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    $"Resolusi foto {image.Width}x{image.Height} ({megapixels:0.##} MP) di bawah minimum (sisi terpanjang {_options.MinLongSide} px dan {_options.MinMegapixels:0.##} MP)."));
         }
 
         return Task.CompletedTask;
