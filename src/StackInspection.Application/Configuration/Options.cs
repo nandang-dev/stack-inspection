@@ -80,8 +80,13 @@ public sealed class PhotoOptions
 {
     public const string SectionName = "Photo";
 
+    /// <summary>Sisi terpanjang minimal (px).</summary>
     [Range(1, 20000)]
-    public int MinLongSide { get; set; } = 3000;
+    public int MinLongSide { get; set; } = 2048;
+
+    /// <summary>Jumlah piksel minimal (megapiksel). 0 = tidak dicek.</summary>
+    [Range(0.0, 100.0)]
+    public double MinMegapixels { get; set; } = 2.0;
 
     [Range(0.05, 0.5)]
     public double OverlayScanRatio { get; set; } = 0.25;
