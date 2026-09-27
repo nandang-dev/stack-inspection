@@ -16,7 +16,7 @@ namespace StackInspection.Infrastructure.Vision;
 /// <remarks>
 /// Label SKU dibaca sekali per foto: area semua kardus dipotong menjadi tile berukuran tetap di
 /// resolusi asli → deteksi teks per tile → teks yang berada di dalam kardus dikenali sekaligus dalam
-/// batch. Jauh lebih cepat daripada menjalankan OCR penuh untuk setiap kardus (ratusan panggilan dengan
+/// batch (potongan lurus). Jauh lebih cepat daripada menjalankan OCR penuh untuk setiap kardus (ratusan panggilan dengan
 /// ukuran input berbeda-beda).
 /// </remarks>
 public sealed class PaddleOcrTextReader : ISkuLabelReader, ITextSpotter, IDisposable
@@ -91,7 +91,9 @@ public sealed class PaddleOcrTextReader : ISkuLabelReader, ITextSpotter, IDispos
                 return [];
             }
 
-            Mat[] crops = [.. kept.Select(i => PaddleOcrAll.GetRotateCropImage(source.Mat, inside[i].Rect))];
+            // Potongan lurus (bounding rect), sama seperti PaddleOcrAll.Run dengan AllowRotateDetection=false.
+            // GetRotateCropImage menghasilkan teks terbalik atas-bawah untuk sebagian kotak (5→2, 6→9).
+            Mat[] crops = [.. kept.Select(i => source.Mat[inside[i].Rect.BoundingRect() & new Rect(0, 0, source.Width, source.Height)].Clone())];
             try
             {
                 PaddleOcrRecognizerResult[] results = _ocr.Recognizer.Run(crops, RecognizeBatchSize);
