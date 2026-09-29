@@ -51,6 +51,7 @@ tidak di-commit) cukup untuk development. Vision asli diuji di Linux (Docker) da
 | `FrontLayer:MinWidthRatio` / `MaxGapRatio` | 0.6 / 0.35 | Filter lapisan belakang |
 | `FrontLayer:MinTopHeightRatio` | 0.55 | Kotak teratas tumpukan yang tingginya < rasio ini × kardus di bawahnya dianggap lapisan belakang (0 = nonaktif) |
 | `Upload:MaxFileSizeMb` | 10 | Batas upload |
+| `Cors:AllowedOrigins` | `["*"]` | Origin yang boleh akses API. `"*"` = semua origin; untuk production isi daftar origin frontend, mis. `["https://planogram.example.com"]` |
 
 ## Folder model
 

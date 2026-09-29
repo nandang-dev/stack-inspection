@@ -22,6 +22,22 @@ builder.Services
 UploadOptions upload = builder.Configuration.GetSection(UploadOptions.SectionName).Get<UploadOptions>() ?? new UploadOptions();
 builder.Services.Configure<FormOptions>(options => options.MultipartBodyLengthLimit = upload.MaxFileSizeBytes + (1024 * 1024));
 
+string[] corsOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+builder.Services.AddCors(options => options.AddDefaultPolicy(policy =>
+{
+    // "*" (atau kosong) = semua origin; selain itu hanya origin yang terdaftar.
+    if (corsOrigins.Length == 0 || corsOrigins.Contains("*"))
+    {
+        policy.AllowAnyOrigin();
+    }
+    else
+    {
+        policy.WithOrigins(corsOrigins);
+    }
+
+    policy.AllowAnyHeader().AllowAnyMethod();
+}));
+
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<ProblemDetailsExceptionHandler>();
 
@@ -52,6 +68,7 @@ WebApplication app = builder.Build();
 
 app.UseExceptionHandler();
 app.UseStatusCodePages();
+app.UseCors();
 if (app.Configuration.GetValue("Swagger:Enabled", app.Environment.IsDevelopment()))
 {
     app.UseSwagger();
