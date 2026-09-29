@@ -198,4 +198,18 @@ public sealed class StackInspectionsApiTests : IClassFixture<StackInspectionsApi
         Assert.Equal("fake-model", field?["default"]?.GetValue<string>());
         Assert.NotNull(doc?["paths"]?["/api/v1/models"]?["get"]?["responses"]?["200"]?["content"]?["application/json"]?["example"]);
     }
+
+    [Fact]
+    public async Task Cors_PreflightFromAnyOrigin_IsAllowed()
+    {
+        using HttpClient client = _factory.CreateClient();
+        using HttpRequestMessage request = new(HttpMethod.Options, "/api/v1/stack-inspections/collect-sku");
+        request.Headers.Add("Origin", "http://localhost:5173");
+        request.Headers.Add("Access-Control-Request-Method", "POST");
+
+        using HttpResponseMessage response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.Equal("*", response.Headers.GetValues("Access-Control-Allow-Origin").Single());
+    }
 }
