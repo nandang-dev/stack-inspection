@@ -95,9 +95,10 @@ internal static class Build
         ICartonDetector detector,
         ISkuLabelReader reader,
         ITextSpotter? spotter = null,
-        int maxFileMb = 10)
+        int maxFileMb = 10,
+        bool cameraOverlay = false)
     {
-        IOptions<PhotoOptions> photo = Options.Create(new PhotoOptions());
+        IOptions<PhotoOptions> photo = Options.Create(new PhotoOptions { CameraOverlayEnabled = cameraOverlay });
         PhotoInspectabilityService inspectability = new(
         [
             new CameraOverlayCheck(spotter ?? new StubSpotter(), photo),

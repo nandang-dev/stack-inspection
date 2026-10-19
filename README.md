@@ -47,7 +47,8 @@ tidak di-commit) cukup untuk development. Vision asli diuji di Linux (Docker) da
 | `Vision:ContainmentThreshold` | 0.8 | Kotak yang ≥80% luasnya berada di dalam kotak lain dibuang sebagai duplikat (0 = nonaktif) |
 | `Vision:MajorityMinCount` / `MajorityDominance` / `MajorityMaxDistance` | 3 / 3 / 1 | Hanya jika `candidateSkus` kosong: hasil baca yang selisih ≤1 digit dari SKU yang muncul ≥3× dan ≥3× lebih sering dikoreksi ke SKU itu (`Corrected`, warning `SKU_CORRECTED_BY_MAJORITY`). `MajorityMinCount` 0 = nonaktif |
 | `Photo:MinLongSide` / `MinMegapixels` | 2048 / 2.0 | Gate resolusi: sisi terpanjang (px) **dan** jumlah piksel (MP) minimal. `MinMegapixels` 0 = tidak dicek |
-| `Photo:OverlayKeywords` | GPS Map Camera, Timemark, Lat, Long, Kode Foto | Gate stempel kamera |
+| `Photo:CameraOverlayEnabled` | false | Gate stempel kamera berbasis OCR. Default mati karena memakan ±100 detik per foto (OCR penuh di strip atas & bawah); akan digantikan classifier kelayakan foto |
+| `Photo:OverlayKeywords` | GPS Map Camera, Timemark, Lat, Long, Kode Foto | Kata kunci gate stempel kamera (hanya jika `CameraOverlayEnabled`) |
 | `FrontLayer:MinWidthRatio` / `MaxGapRatio` | 0.6 / 0.35 | Filter lapisan belakang |
 | `FrontLayer:MinTopHeightRatio` | 0.55 | Kotak teratas tumpukan yang tingginya < rasio ini × kardus di bawahnya dianggap lapisan belakang (0 = nonaktif) |
 | `Upload:MaxFileSizeMb` | 10 | Batas upload |

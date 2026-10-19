@@ -77,7 +77,7 @@ public class CollectSkuHandlerTests
     {
         (List<CartonBox> cartons, Dictionary<BoundingBox, (string?, string?)> texts) = Grid(1, 1, "68140913");
         CollectSkuHandler handler = Build.Handler(
-            new StubDecoder(3000, 4000), new StubDetector(cartons), new StubReader(texts), new StubSpotter("Note : Captured by GPS Map Camera", "Lat -5.468766, Long 122.598604"));
+            new StubDecoder(3000, 4000), new StubDetector(cartons), new StubReader(texts), new StubSpotter("Note : Captured by GPS Map Camera", "Lat -5.468766, Long 122.598604"), cameraOverlay: true);
 
         PhotoNotInspectableException error = await Assert.ThrowsAsync<PhotoNotInspectableException>(
             () => handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None));
@@ -86,11 +86,23 @@ public class CollectSkuHandlerTests
     }
 
     [Fact]
+    public async Task CameraOverlayDisabled_SkipsOcr()
+    {
+        (List<CartonBox> cartons, Dictionary<BoundingBox, (string?, string?)> texts) = Grid(1, 1, "68140913");
+        StubSpotter spotter = new("Note : Captured by GPS Map Camera", "Lat -5.468766, Long 122.598604");
+        CollectSkuHandler handler = Build.Handler(new StubDecoder(3000, 4000), new StubDetector(cartons), new StubReader(texts), spotter);
+
+        CollectSkuResponse result = await handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None);
+
+        Assert.Single(result.Cells);
+    }
+
+    [Fact]
     public async Task SingleKeyword_IsNotEnoughForOverlay()
     {
         (List<CartonBox> cartons, Dictionary<BoundingBox, (string?, string?)> texts) = Grid(1, 1, "68140913");
         CollectSkuHandler handler = Build.Handler(
-            new StubDecoder(3000, 4000), new StubDetector(cartons), new StubReader(texts), new StubSpotter("LONG LASTING"));
+            new StubDecoder(3000, 4000), new StubDetector(cartons), new StubReader(texts), new StubSpotter("LONG LASTING"), cameraOverlay: true);
 
         CollectSkuResponse result = await handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None);
 

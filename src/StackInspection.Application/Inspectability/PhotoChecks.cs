@@ -46,7 +46,10 @@ public sealed class ResolutionCheck : IPhotoInspectabilityCheck
     }
 }
 
-/// <summary>Gate 2: tolak foto dengan stempel aplikasi kamera di strip atas/bawah.</summary>
+/// <summary>
+/// Gate 2: tolak foto dengan stempel aplikasi kamera di strip atas/bawah.
+/// Hanya berjalan jika <see cref="PhotoOptions.CameraOverlayEnabled"/>.
+/// </summary>
 public sealed class CameraOverlayCheck : IPhotoInspectabilityCheck
 {
     private readonly ITextSpotter _spotter;
@@ -64,6 +67,11 @@ public sealed class CameraOverlayCheck : IPhotoInspectabilityCheck
     public async Task CheckAsync(VisionImage image, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(image);
+        if (!_options.CameraOverlayEnabled)
+        {
+            return;
+        }
+
         double strip = image.Height * _options.OverlayScanRatio;
         BoundingBox top = new(0, 0, image.Width, strip);
         BoundingBox bottom = new(0, image.Height - strip, image.Width, image.Height);

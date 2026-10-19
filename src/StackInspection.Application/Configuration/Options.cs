@@ -88,6 +88,12 @@ public sealed class PhotoOptions
     [Range(0.0, 100.0)]
     public double MinMegapixels { get; set; } = 2.0;
 
+    /// <summary>
+    /// Gate stempel kamera berbasis OCR. Default mati: OCR penuh di strip atas/bawah memakan ±100 detik
+    /// per foto di CPU 4 vCPU. Akan digantikan classifier kelayakan foto.
+    /// </summary>
+    public bool CameraOverlayEnabled { get; set; }
+
     [Range(0.05, 0.5)]
     public double OverlayScanRatio { get; set; } = 0.25;
 
