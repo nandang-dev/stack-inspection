@@ -111,6 +111,14 @@ public sealed class PhotoOptions
 
     [Range(1, 10)]
     public int OverlayMinKeywordHits { get; set; } = 2;
+
+    /// <summary>Fast reject: jumlah kardus terdeteksi minimal (setelah buang kotak bersarang). 0 = nonaktif.</summary>
+    [Range(0, 1000)]
+    public int MinCartonCount { get; set; } = 5;
+
+    /// <summary>Fast reject: total luas kotak kardus / luas foto minimal. 0 = nonaktif.</summary>
+    [Range(0.0, 1.0)]
+    public double MinCartonCoverage { get; set; } = 0.15;
 }
 
 /// <summary>Filter lapisan depan (section <c>FrontLayer</c>).</summary>

@@ -214,6 +214,34 @@ public class CollectSkuHandlerTests
         Assert.DoesNotContain(CollectWarnings.SkuCorrectedByMajority, result.Warnings);
     }
 
+    [Theory]
+    [InlineData(5, 0.0)]     // 4 kardus < minimal 5
+    [InlineData(0, 0.15)]    // 4 kardus 400x300 di foto 3000x4000 = 4% luas foto
+    public async Task WeakDetection_IsFastRejectedBeforeOcr(int minCount, double minCoverage)
+    {
+        (List<CartonBox> cartons, Dictionary<BoundingBox, (string?, string?)> texts) = Grid(2, 2, "68140913");
+        StubReader reader = new(texts);
+        CollectSkuHandler handler = Build.Handler(
+            new StubDecoder(3000, 4000), new StubDetector(cartons), reader, minCartonCount: minCount, minCartonCoverage: minCoverage);
+
+        PhotoNotInspectableException error = await Assert.ThrowsAsync<PhotoNotInspectableException>(
+            () => handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None));
+
+        Assert.Equal((PhotoRejectReasons.FastRejected, 0), (error.Reason, reader.Calls));
+    }
+
+    [Fact]
+    public async Task DenseLoad_PassesDetectionGate()
+    {
+        (List<CartonBox> cartons, Dictionary<BoundingBox, (string?, string?)> texts) = Grid(8, 6, "68140913");
+        CollectSkuHandler handler = Build.Handler(
+            new StubDecoder(3000, 4000), new StubDetector(cartons), new StubReader(texts), minCartonCount: 5, minCartonCoverage: 0.15);
+
+        CollectSkuResponse result = await handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None);
+
+        Assert.Equal(48, result.Cells.Count);
+    }
+
     [Fact]
     public async Task NullCandidate_IsIgnored()
     {
