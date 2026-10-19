@@ -203,6 +203,17 @@ public class CollectSkuHandlerTests
     }
 
     [Fact]
+    public async Task NullCandidate_IsIgnored()
+    {
+        (List<CartonBox> cartons, Dictionary<BoundingBox, (string?, string?)> texts) = Grid(2, 2, "65730554");
+        CollectSkuHandler handler = Build.Handler(new StubDecoder(3000, 4000), new StubDetector(cartons), new StubReader(texts));
+
+        CollectSkuResponse result = await handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, [null!, "65730554"]), None);
+
+        Assert.All(result.Cells, c => Assert.Equal(("65730554", ReadStatus.Matched), (c.Sku, c.ReadStatus)));
+    }
+
+    [Fact]
     public async Task NestedDuplicateBox_IsRemoved()
     {
         CartonBox carton = Build.Carton(300, 600);

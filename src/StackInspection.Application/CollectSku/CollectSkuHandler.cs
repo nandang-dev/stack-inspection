@@ -166,8 +166,10 @@ public sealed partial class CollectSkuHandler
         }
     }
 
-    private static string[] NormalizeCandidates(IReadOnlyList<string> candidates) =>
+    private static string[] NormalizeCandidates(IReadOnlyList<string?> candidates) =>
         [.. candidates
+            // field form candidateSkus yang dikirim kosong di-bind menjadi elemen null
+            .OfType<string>()
             .SelectMany(c => c.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             .Select(SkuMatcher.NormalizeDigits)
             .Where(c => c.Length > 0)
