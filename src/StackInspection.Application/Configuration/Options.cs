@@ -118,7 +118,7 @@ public sealed class PhotoOptions
 
     /// <summary>Fast reject: total luas kotak kardus / luas foto minimal. 0 = nonaktif.</summary>
     [Range(0.0, 1.0)]
-    public double MinCartonCoverage { get; set; } = 0.15;
+    public double MinCartonCoverage { get; set; } = 0.08;
 }
 
 /// <summary>Filter lapisan depan (section <c>FrontLayer</c>).</summary>
