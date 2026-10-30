@@ -92,6 +92,7 @@ Embedder tampilan kardus: salin `carton-trainer/registry/models/carton-embed-vN/
 `<ModelsDirectory>/carton-embed-vN/` dan set `Vision:AppearanceModel`. Model card `task` "carton appearance embedder"
 membuatnya tidak muncul di daftar model deteksi. Input `[N,3,192,192]` RGB 0–1 (crop kotak kardus, resize langsung
 INTER_AREA), output `embedding` `[N,216]` sudah dinormalisasi L2.
+Jika folder model tidak ada, inferensi tampilan dilewati (warning di log), Collect SKU tetap berjalan.
 
 Classifier fast reject: salin folder `carton-trainer/registry/models/fast-reject-vN/` (cukup `.onnx` +
 `model-card.json`) ke `<ModelsDirectory>/fast-reject-vN/`, set `Photo:ClassifierModel` dan

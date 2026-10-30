@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
@@ -13,30 +14,34 @@ namespace StackInspection.Infrastructure.Vision;
 /// Model: <c>&lt;Vision:ModelsDirectory&gt;/&lt;Vision:AppearanceModel&gt;/*.onnx</c>, session dibuat saat pertama
 /// kali dipakai. Preprocess harus sama dengan export: crop kotak dari foto asli, resize langsung (tanpa letterbox,
 /// INTER_AREA) ke <see cref="InputSize"/>, BGR → RGB, /255, NCHW; normalisasi ImageNet + L2 ada di dalam model.
-/// Semua kardus satu foto diproses dalam satu batch.
+/// Semua kardus satu foto diproses dalam satu batch. Model tidak ditemukan → warning di log dan tanpa vektor
+/// (inferensi dari tampilan dilewati, request tetap berhasil) karena fitur ini hanya pelengkap OCR.
 /// </summary>
-public sealed class OnnxCartonEmbedder : ICartonEmbedder, IDisposable
+public sealed partial class OnnxCartonEmbedder : ICartonEmbedder, IDisposable
 {
     public const int InputSize = 192;
 
-    private readonly Lazy<InferenceSession> _session;
+    private readonly Lazy<InferenceSession?> _session;
+    private readonly ILogger<OnnxCartonEmbedder> _logger;
 
-    public OnnxCartonEmbedder(IOptions<VisionOptions> options)
+    public OnnxCartonEmbedder(IOptions<VisionOptions> options, ILogger<OnnxCartonEmbedder> logger)
     {
         ArgumentNullException.ThrowIfNull(options);
+        _logger = logger;
         string folder = Path.Combine(OnnxCartonDetector.ResolvePath(options.Value.ModelsDirectory), options.Value.AppearanceModel);
         int threads = options.Value.Threads;
-        _session = new Lazy<InferenceSession>(() => CreateSession(folder, threads));
+        _session = new Lazy<InferenceSession?>(() => CreateSession(folder, threads));
     }
 
-    private static InferenceSession CreateSession(string folder, int threads)
+    private InferenceSession? CreateSession(string folder, int threads)
     {
         string? path = Directory.Exists(folder)
             ? Directory.EnumerateFiles(folder, "*.onnx").Order(StringComparer.Ordinal).FirstOrDefault()
             : null;
         if (path is null)
         {
-            throw new FileNotFoundException($"Model embedder (.onnx) tidak ditemukan di folder: {folder}.", folder);
+            LogModelMissing(_logger, folder);
+            return null;
         }
 
         SessionOptions sessionOptions = new()
@@ -56,7 +61,10 @@ public sealed class OnnxCartonEmbedder : ICartonEmbedder, IDisposable
         }
 
         OpenCvImage source = OpenCvImage.From(image);
-        InferenceSession session = _session.Value;
+        if (_session.Value is not InferenceSession session)
+        {
+            return Task.FromResult<IReadOnlyList<float[]>>([]);
+        }
         const int plane = InputSize * InputSize;
         float[] input = new float[boxes.Count * 3 * plane];
         for (int i = 0; i < boxes.Count; i++)
@@ -114,7 +122,12 @@ public sealed class OnnxCartonEmbedder : ICartonEmbedder, IDisposable
     {
         if (_session.IsValueCreated)
         {
-            _session.Value.Dispose();
+            _session.Value?.Dispose();
         }
     }
+
+    [LoggerMessage(
+        Level = Microsoft.Extensions.Logging.LogLevel.Warning,
+        Message = "Model embedder (.onnx) tidak ditemukan di folder {Folder}: inferensi SKU dari tampilan dilewati. Restart setelah model disalin.")]
+    private static partial void LogModelMissing(ILogger logger, string folder);
 }
