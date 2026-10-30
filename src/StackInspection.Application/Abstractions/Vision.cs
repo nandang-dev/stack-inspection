@@ -87,3 +87,10 @@ public interface ITextSpotter
 {
     Task<IReadOnlyList<OcrText>> SpotAsync(VisionImage image, BoundingBox region, CancellationToken cancellationToken);
 }
+
+/// <summary>Classifier kelayakan foto (fast reject) hasil Carton Trainer: memberi peluang foto harus ditolak.</summary>
+public interface IPhotoClassifier
+{
+    /// <summary>p(tolak) 0–1 untuk foto utuh.</summary>
+    Task<double> RejectProbabilityAsync(VisionImage image, CancellationToken cancellationToken);
+}

@@ -10,7 +10,8 @@ namespace StackInspection.Infrastructure.Vision;
 /// <summary>
 /// Membaca model dari <c>Vision:ModelsDirectory</c>: setiap subfolder berisi satu file <c>.onnx</c> dan
 /// (opsional) <c>model-card.json</c> hasil export Carton Trainer. Tanpa model card, input size dan
-/// threshold memakai default <see cref="VisionOptions"/>. Folder dipindai sekali saat start.
+/// threshold memakai default <see cref="VisionOptions"/>. Folder classifier (model card <c>task</c> berisi
+/// "classifier") dilewati. Folder dipindai sekali saat start.
 /// </summary>
 public sealed class FileSystemModelCatalog : IModelCatalog
 {
@@ -57,6 +58,11 @@ public sealed class FileSystemModelCatalog : IModelCatalog
         {
             string name = Path.GetFileName(folder);
             ModelCardFile? card = ReadCard(Path.Combine(folder, "model-card.json"));
+            if (card?.Task?.Contains("classifier", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                continue; // classifier fast reject (Photo:ClassifierModel), bukan model deteksi
+            }
+
             string? onnxFile = card?.Onnx?.File is { Length: > 0 } file && File.Exists(Path.Combine(folder, file))
                 ? Path.Combine(folder, file)
                 : Directory.EnumerateFiles(folder, "*.onnx").Order(StringComparer.Ordinal).FirstOrDefault();
@@ -101,6 +107,8 @@ public sealed class FileSystemModelCatalog : IModelCatalog
     /// <summary>Subset <c>model-card.json</c> Carton Trainer yang dipakai API.</summary>
     private sealed class ModelCardFile
     {
+        public string? Task { get; init; }
+
         public int? InputSize { get; init; }
 
         public ThresholdsFile? RecommendedThresholds { get; init; }

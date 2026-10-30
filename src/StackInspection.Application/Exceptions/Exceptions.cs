@@ -32,6 +32,9 @@ public static class PhotoRejectReasons
     public const string ResolutionTooLow = "PHOTO_RESOLUTION_TOO_LOW";
     public const string CameraOverlayDetected = "CAMERA_OVERLAY_DETECTED";
     public const string NoCartonDetected = "NO_CARTON_DETECTED";
+
+    /// <summary>Ditolak gate cepat tanpa alasan spesifik (gate yang menolak hanya dicatat di log).</summary>
+    public const string FastRejected = "FAST_REJECTED";
 }
 
 /// <summary>Foto tidak layak dinilai (HTTP 422, code PHOTO_NOT_INSPECTABLE).</summary>

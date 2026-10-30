@@ -95,9 +95,18 @@ internal static class Build
         ICartonDetector detector,
         ISkuLabelReader reader,
         ITextSpotter? spotter = null,
-        int maxFileMb = 10)
+        int maxFileMb = 10,
+        bool cameraOverlay = false,
+        int minCartonCount = 0,
+        double minCartonCoverage = 0)
     {
-        IOptions<PhotoOptions> photo = Options.Create(new PhotoOptions());
+        // gate fast reject dimatikan secara default supaya grid kecil di test lain tidak tertolak
+        IOptions<PhotoOptions> photo = Options.Create(new PhotoOptions
+        {
+            CameraOverlayEnabled = cameraOverlay,
+            MinCartonCount = minCartonCount,
+            MinCartonCoverage = minCartonCoverage,
+        });
         PhotoInspectabilityService inspectability = new(
         [
             new CameraOverlayCheck(spotter ?? new StubSpotter(), photo),
@@ -112,6 +121,7 @@ internal static class Build
             Options.Create(new VisionOptions()),
             Options.Create(new FrontLayerOptions()),
             Options.Create(new UploadOptions { MaxFileSizeMb = maxFileMb }),
+            photo,
             NullLogger<CollectSkuHandler>.Instance);
     }
 }

@@ -88,6 +88,12 @@ public sealed class PhotoOptions
     [Range(0.0, 100.0)]
     public double MinMegapixels { get; set; } = 2.0;
 
+    /// <summary>
+    /// Gate stempel kamera berbasis OCR. Default mati: OCR penuh di strip atas/bawah memakan ±100 detik
+    /// per foto di CPU 4 vCPU. Akan digantikan classifier kelayakan foto.
+    /// </summary>
+    public bool CameraOverlayEnabled { get; set; }
+
     [Range(0.05, 0.5)]
     public double OverlayScanRatio { get; set; } = 0.25;
 
@@ -105,6 +111,24 @@ public sealed class PhotoOptions
 
     [Range(1, 10)]
     public int OverlayMinKeywordHits { get; set; } = 2;
+
+    /// <summary>
+    /// Fast reject: nama subfolder model classifier kelayakan foto di <c>Vision:ModelsDirectory</c>
+    /// (mis. <c>fast-reject-v3</c>). Kosong = gate classifier nonaktif.
+    /// </summary>
+    public string ClassifierModel { get; set; } = string.Empty;
+
+    /// <summary>Fast reject: foto ditolak jika p(tolak) classifier ≥ nilai ini. Di bawahnya (ragu) foto lolos.</summary>
+    [Range(0.5, 1.0)]
+    public double ClassifierRejectThreshold { get; set; } = 0.7565;
+
+    /// <summary>Fast reject: jumlah kardus terdeteksi minimal (setelah buang kotak bersarang). 0 = nonaktif.</summary>
+    [Range(0, 1000)]
+    public int MinCartonCount { get; set; } = 5;
+
+    /// <summary>Fast reject: total luas kotak kardus / luas foto minimal. 0 = nonaktif.</summary>
+    [Range(0.0, 1.0)]
+    public double MinCartonCoverage { get; set; } = 0.08;
 }
 
 /// <summary>Filter lapisan depan (section <c>FrontLayer</c>).</summary>

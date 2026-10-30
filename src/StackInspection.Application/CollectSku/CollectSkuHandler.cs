@@ -36,6 +36,7 @@ public sealed partial class CollectSkuHandler
     private readonly VisionOptions _vision;
     private readonly FrontLayerOptions _frontLayer;
     private readonly UploadOptions _upload;
+    private readonly PhotoOptions _photo;
     private readonly ILogger<CollectSkuHandler> _logger;
 
     public CollectSkuHandler(
@@ -47,11 +48,13 @@ public sealed partial class CollectSkuHandler
         IOptions<VisionOptions> vision,
         IOptions<FrontLayerOptions> frontLayer,
         IOptions<UploadOptions> upload,
+        IOptions<PhotoOptions> photo,
         ILogger<CollectSkuHandler> logger)
     {
         ArgumentNullException.ThrowIfNull(vision);
         ArgumentNullException.ThrowIfNull(frontLayer);
         ArgumentNullException.ThrowIfNull(upload);
+        ArgumentNullException.ThrowIfNull(photo);
         _decoder = decoder;
         _detector = detector;
         _models = models;
@@ -60,6 +63,7 @@ public sealed partial class CollectSkuHandler
         _vision = vision.Value;
         _frontLayer = frontLayer.Value;
         _upload = upload.Value;
+        _photo = photo.Value;
         _logger = logger;
     }
 
@@ -79,6 +83,16 @@ public sealed partial class CollectSkuHandler
         IReadOnlyList<CartonBox> detected = await _detector.DetectAsync(image, model, cancellationToken).ConfigureAwait(false);
         long detectMs = stopwatch.ElapsedMilliseconds;
         IReadOnlyList<CartonBox> distinct = ContainmentFilter.Apply(detected, _vision.ContainmentThreshold);
+        string? failedGate = DetectionGate.Check(
+            distinct, image.Width, image.Height, _photo.MinCartonCount, _photo.MinCartonCoverage);
+        if (failedGate is not null)
+        {
+            LogFastReject(_logger, failedGate, stopwatch.ElapsedMilliseconds, distinct.Count);
+            throw new PhotoNotInspectableException(
+                PhotoRejectReasons.FastRejected,
+                "Foto tidak layak dinilai. Ambil ulang foto muatan dari depan, cukup dekat, dan jelas.");
+        }
+
         FrontLayerResult front = FrontLayerFilter.Apply(
             distinct, _frontLayer.MinWidthRatio, _frontLayer.MaxGapRatio, _frontLayer.MinTopHeightRatio);
         if (front.Kept.Count == 0)
@@ -166,8 +180,10 @@ public sealed partial class CollectSkuHandler
         }
     }
 
-    private static string[] NormalizeCandidates(IReadOnlyList<string> candidates) =>
+    private static string[] NormalizeCandidates(IReadOnlyList<string?> candidates) =>
         [.. candidates
+            // field form candidateSkus yang dikirim kosong di-bind menjadi elemen null
+            .OfType<string>()
             .SelectMany(c => c.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             .Select(SkuMatcher.NormalizeDigits)
             .Where(c => c.Length > 0)
@@ -364,4 +380,9 @@ public sealed partial class CollectSkuHandler
         Message = "Collect SKU timing: decode {DecodeMs} ms, inspect {InspectMs} ms, detect {DetectMs} ms, ocr {OcrMs} ms ({Cartons} kardus, {Texts} teks)")]
     private static partial void LogTimings(
         ILogger logger, long decodeMs, long inspectMs, long detectMs, long ocrMs, int cartons, int texts);
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "Fast reject: gate {Gate} setelah {ElapsedMs} ms ({Cartons} kardus terdeteksi)")]
+    private static partial void LogFastReject(ILogger logger, string gate, long elapsedMs, int cartons);
 }
