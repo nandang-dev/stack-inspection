@@ -129,6 +129,13 @@ public sealed class FakePhotoClassifier : IPhotoClassifier
         Task.FromResult(0.0);
 }
 
+/// <summary>Embedder palsu: tanpa vektor, sehingga inferensi SKU dari tampilan dilewati.</summary>
+public sealed class FakeCartonEmbedder : ICartonEmbedder
+{
+    public Task<IReadOnlyList<float[]>> EmbedAsync(VisionImage image, IReadOnlyList<BoundingBox> boxes, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<float[]>>([]);
+}
+
 /// <summary>Katalog berisi satu model palsu (dan model default dari konfigurasi).</summary>
 public sealed class FakeModelCatalog : IModelCatalog
 {

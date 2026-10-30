@@ -3,7 +3,7 @@
  * src/StackInspection.Application/Contracts). Nama field camelCase, enum sebagai union string.
  */
 
-export type ReadStatus = 'Matched' | 'Corrected' | 'Unknown' | 'LabelNotVisible';
+export type ReadStatus = 'Matched' | 'Corrected' | 'Unknown' | 'LabelNotVisible' | 'InferredByAppearance';
 
 export type SkuClass = 'A' | 'B' | 'C';
 
@@ -20,12 +20,18 @@ export type CollectWarning =
   | 'IRREGULAR_GRID'
   | 'BACK_LAYER_EXCLUDED'
   /** Tanpa candidateSkus: ada hasil baca yang dikoreksi ke SKU mayoritas di foto (readStatus 'Corrected'). */
-  | 'SKU_CORRECTED_BY_MAJORITY';
+  | 'SKU_CORRECTED_BY_MAJORITY'
+  /** Nomor SKU terbaca sebagian (label terpotong) lalu dilengkapi dari SKU yang terbaca utuh di foto / candidateSkus. */
+  | 'SKU_CORRECTED_BY_PARTIAL_READ'
+  /** SKU diambil dari kardus lain yang tampilannya sangat mirip (readStatus 'InferredByAppearance'). */
+  | 'SKU_INFERRED_BY_APPEARANCE';
 
 export type PhotoRejectReason =
   | 'PHOTO_RESOLUTION_TOO_LOW'
   | 'CAMERA_OVERLAY_DETECTED'
-  | 'NO_CARTON_DETECTED';
+  | 'NO_CARTON_DETECTED'
+  /** Ditolak gate cepat (classifier / hasil deteksi) tanpa alasan spesifik. */
+  | 'FAST_REJECTED';
 
 /** Kode SKU khusus untuk sel yang tidak terbaca. */
 export type SpecialSku = 'UNKNOWN' | 'LABEL_NOT_VISIBLE';

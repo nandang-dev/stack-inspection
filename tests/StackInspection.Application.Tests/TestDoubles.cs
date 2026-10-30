@@ -84,6 +84,18 @@ internal sealed class StubSpotter(params string[] texts) : ITextSpotter
         Task.FromResult<IReadOnlyList<OcrText>>([.. texts.Select(t => new OcrText(t, 0.99))]);
 }
 
+/// <summary>Vektor tampilan per kotak dari fungsi; kotak yang tidak dikenal mendapat vektor nol.</summary>
+internal sealed class StubEmbedder(Func<BoundingBox, float[]> vector) : ICartonEmbedder
+{
+    public int Calls { get; private set; }
+
+    public Task<IReadOnlyList<float[]>> EmbedAsync(VisionImage image, IReadOnlyList<BoundingBox> boxes, CancellationToken cancellationToken)
+    {
+        Calls++;
+        return Task.FromResult<IReadOnlyList<float[]>>([.. boxes.Select(vector)]);
+    }
+}
+
 internal static class Build
 {
     public static readonly byte[] Jpeg = [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10];
@@ -98,7 +110,8 @@ internal static class Build
         int maxFileMb = 10,
         bool cameraOverlay = false,
         int minCartonCount = 0,
-        double minCartonCoverage = 0)
+        double minCartonCoverage = 0,
+        ICartonEmbedder? embedder = null)
     {
         // gate fast reject dimatikan secara default supaya grid kecil di test lain tidak tertolak
         IOptions<PhotoOptions> photo = Options.Create(new PhotoOptions
@@ -117,8 +130,9 @@ internal static class Build
             detector,
             new StubCatalog(),
             reader,
+            embedder ?? new StubEmbedder(_ => []),
             inspectability,
-            Options.Create(new VisionOptions()),
+            Options.Create(new VisionOptions { AppearanceModel = embedder is null ? string.Empty : "carton-embed-v1" }),
             Options.Create(new FrontLayerOptions()),
             Options.Create(new UploadOptions { MaxFileSizeMb = maxFileMb }),
             photo,

@@ -10,8 +10,8 @@ namespace StackInspection.Infrastructure.Vision;
 /// <summary>
 /// Membaca model dari <c>Vision:ModelsDirectory</c>: setiap subfolder berisi satu file <c>.onnx</c> dan
 /// (opsional) <c>model-card.json</c> hasil export Carton Trainer. Tanpa model card, input size dan
-/// threshold memakai default <see cref="VisionOptions"/>. Folder classifier (model card <c>task</c> berisi
-/// "classifier") dilewati. Folder dipindai sekali saat start.
+/// threshold memakai default <see cref="VisionOptions"/>. Folder model pendukung (model card <c>task</c> berisi
+/// "classifier" atau "embedder") dilewati. Folder dipindai sekali saat start.
 /// </summary>
 public sealed class FileSystemModelCatalog : IModelCatalog
 {
@@ -58,9 +58,9 @@ public sealed class FileSystemModelCatalog : IModelCatalog
         {
             string name = Path.GetFileName(folder);
             ModelCardFile? card = ReadCard(Path.Combine(folder, "model-card.json"));
-            if (card?.Task?.Contains("classifier", StringComparison.OrdinalIgnoreCase) == true)
+            if (IsAuxiliaryModel(card?.Task))
             {
-                continue; // classifier fast reject (Photo:ClassifierModel), bukan model deteksi
+                continue; // classifier fast reject / embedder tampilan, bukan model deteksi
             }
 
             string? onnxFile = card?.Onnx?.File is { Length: > 0 } file && File.Exists(Path.Combine(folder, file))
@@ -86,6 +86,12 @@ public sealed class FileSystemModelCatalog : IModelCatalog
 
         return models;
     }
+
+    /// <summary>Model pendukung (Photo:ClassifierModel, Vision:AppearanceModel) yang tidak boleh muncul sebagai detektor.</summary>
+    private static bool IsAuxiliaryModel(string? task) =>
+        task is not null
+        && (task.Contains("classifier", StringComparison.OrdinalIgnoreCase)
+            || task.Contains("embedder", StringComparison.OrdinalIgnoreCase));
 
     private static ModelCardFile? ReadCard(string path)
     {

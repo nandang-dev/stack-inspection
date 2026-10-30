@@ -22,6 +22,12 @@ public enum ReadStatus
 
     /// <summary>Tidak ada teks digit sama sekali (label tidak menghadap kamera).</summary>
     LabelNotVisible,
+
+    /// <summary>
+    /// Label tidak terbaca, SKU diambil dari kardus lain di foto yang sama yang tampilannya sangat mirip
+    /// (bukan hasil baca OCR).
+    /// </summary>
+    InferredByAppearance,
 }
 
 /// <summary>Kotak dalam koordinat piksel foto asli.</summary>

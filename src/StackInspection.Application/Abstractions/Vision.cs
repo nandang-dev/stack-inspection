@@ -94,3 +94,10 @@ public interface IPhotoClassifier
     /// <summary>p(tolak) 0–1 untuk foto utuh.</summary>
     Task<double> RejectProbabilityAsync(VisionImage image, CancellationToken cancellationToken);
 }
+
+/// <summary>Vektor tampilan kardus (embedder Carton Trainer) untuk mengenali kardus yang sama tanpa membaca label.</summary>
+public interface ICartonEmbedder
+{
+    /// <summary>Satu vektor (panjang 1) per kotak, urutan sama dengan <paramref name="boxes"/>.</summary>
+    Task<IReadOnlyList<float[]>> EmbedAsync(VisionImage image, IReadOnlyList<BoundingBox> boxes, CancellationToken cancellationToken);
+}

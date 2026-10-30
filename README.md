@@ -49,6 +49,9 @@ tidak di-commit) cukup untuk development. Vision asli diuji di Linux (Docker) da
 | `Photo:MinLongSide` / `MinMegapixels` | 2048 / 2.0 | Gate resolusi: sisi terpanjang (px) **dan** jumlah piksel (MP) minimal. `MinMegapixels` 0 = tidak dicek |
 | `Photo:CameraOverlayEnabled` | false | Gate stempel kamera berbasis OCR. Default mati karena memakan ±100 detik per foto (OCR penuh di strip atas & bawah); akan digantikan classifier kelayakan foto |
 | `Photo:OverlayKeywords` | GPS Map Camera, Timemark, Lat, Long, Kode Foto | Kata kunci gate stempel kamera (hanya jika `CameraOverlayEnabled`) |
+| `Vision:PartialReadMinDigits` | 5 | Nomor SKU yang hanya terbaca sebagian (label terpotong/tertutup plastik, stiker, body kendaraan) dilengkapi dari SKU yang terbaca utuh di foto yang sama atau dari `candidateSkus`, jika potongannya ≥ 5 digit, berurutan, dan cocok ke tepat satu SKU (potongan ≥ 7 digit boleh beda 1 digit, mis. `1972453` → `64972453`). Status `Corrected`, warning `SKU_CORRECTED_BY_PARTIAL_READ`. 0 = nonaktif |
+| `Vision:AppearanceModel` | `carton-embed-v1` | Kardus yang labelnya tetap tidak terbaca diberi SKU kardus lain di foto yang sama yang tampilannya sangat mirip (embedder MobileNetV3 ImageNet, ±15 ms per 64 kardus). Status `InferredByAppearance`, warning `SKU_INFERRED_BY_APPEARANCE`. Kosong = nonaktif |
+| `Vision:AppearanceMinSimilarity` / `AppearanceMinReferences` / `AppearanceMinMargin` | 0.95 / 2 / 0.05 | Syarat inferensi tampilan: minimal 2 kardus terbaca ber-SKU sama dengan kemiripan ≥ 0.95, dan SKU lain kalah ≥ 0.05. Dikalibrasi baru dari 1 foto (4519909695): pada 0.90 kardus Lux di belakang plastik ikut diberi SKU teh (salah), pada 0.95 tidak ada yang salah tetapi hanya 5/9 kardus tanpa label yang terisi |
 | `Photo:ClassifierModel` / `ClassifierRejectThreshold` | `fast-reject-v3` / 0.7565 | Fast reject classifier (MobileNetV3, ±3 ms/foto) dijalankan setelah gate resolusi, sebelum deteksi: foto ditolak (`FAST_REJECTED`) jika p(tolak) ≥ ambang; di bawahnya (ragu) lolos. Model = subfolder di `Vision:ModelsDirectory` (model card `task` berisi "classifier", tidak muncul di daftar model deteksi). Skor setiap foto dicatat di log `Fast reject classifier ...`. Kosong = nonaktif. Validasi silang fast-reject-v3 di ambang 0.7565: 1/65 foto layak tertolak, 72% foto tidak layak tertangkap |
 | `Photo:MinCartonCount` / `MinCartonCoverage` | 5 / 0.08 | Fast reject sebelum OCR: foto ditolak (`FAST_REJECTED`) jika kardus terdeteksi < 5 atau total luas kotak kardus < 8% luas foto (bukan muatan, kontainer kosong, terlalu jauh). Gate yang menolak dicatat di log `Fast reject: gate ...`. 0 = nonaktif |
 | `FrontLayer:MinWidthRatio` / `MaxGapRatio` | 0.6 / 0.35 | Filter lapisan belakang |
@@ -67,6 +70,9 @@ File model **tidak di-commit** dan **tidak ikut di image** (sesuai brief). Lokas
     model-card.json       ← inputSize, recommendedThresholds, metrik, status
   carton-v2/
     ...
+  carton-embed-v1/        ← embedder tampilan kardus (Vision:AppearanceModel), bukan model deteksi
+    carton-embed-v1.onnx
+    model-card.json
   fast-reject-v3/         ← classifier fast reject (Photo:ClassifierModel), bukan model deteksi
     fast-reject-v3.onnx
     model-card.json       ← task "fast-reject classifier ...", recommendedRejectThreshold
@@ -81,6 +87,11 @@ File model **tidak di-commit** dan **tidak ikut di image** (sesuai brief). Lokas
 
 Menambah model baru: salin `carton-vN.onnx` dan `model-card.json` dari
 `carton-trainer/registry/models/carton-vN/` ke `<ModelsDirectory>/carton-vN/`, lalu restart.
+
+Embedder tampilan kardus: salin `carton-trainer/registry/models/carton-embed-vN/` (`.onnx` + `model-card.json`) ke
+`<ModelsDirectory>/carton-embed-vN/` dan set `Vision:AppearanceModel`. Model card `task` "carton appearance embedder"
+membuatnya tidak muncul di daftar model deteksi. Input `[N,3,192,192]` RGB 0–1 (crop kotak kardus, resize langsung
+INTER_AREA), output `embedding` `[N,216]` sudah dinormalisasi L2.
 
 Classifier fast reject: salin folder `carton-trainer/registry/models/fast-reject-vN/` (cukup `.onnx` +
 `model-card.json`) ke `<ModelsDirectory>/fast-reject-vN/`, set `Photo:ClassifierModel` dan

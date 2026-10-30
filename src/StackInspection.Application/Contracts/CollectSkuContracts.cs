@@ -42,7 +42,10 @@ public sealed class CellDto
     /// <summary>Keyakinan deteksi kardus 0–1.</summary>
     public double DetectionConfidence { get; init; }
 
-    /// <summary>Status baca: <c>Matched</c>, <c>Corrected</c>, <c>Unknown</c>, <c>LabelNotVisible</c>.</summary>
+    /// <summary>
+    /// Status baca: <c>Matched</c>, <c>Corrected</c>, <c>Unknown</c>, <c>LabelNotVisible</c>,
+    /// <c>InferredByAppearance</c> (SKU dari kardus lain yang tampilannya sangat mirip, bukan hasil OCR).
+    /// </summary>
     public ReadStatus ReadStatus { get; init; }
 
     /// <summary>Kotak kardus.</summary>
@@ -138,4 +141,13 @@ public static class CollectWarnings
     /// Tanpa <c>candidateSkus</c>: ada hasil baca yang dikoreksi ke SKU mayoritas di foto (status <c>Corrected</c>).
     /// </summary>
     public const string SkuCorrectedByMajority = "SKU_CORRECTED_BY_MAJORITY";
+
+    /// <summary>
+    /// Ada nomor SKU yang hanya terbaca sebagian (label terpotong/tertutup) lalu dilengkapi dari SKU yang
+    /// terbaca utuh di foto atau dari <c>candidateSkus</c> (status <c>Corrected</c>).
+    /// </summary>
+    public const string SkuCorrectedByPartialRead = "SKU_CORRECTED_BY_PARTIAL_READ";
+
+    /// <summary>Ada kardus yang SKU-nya diambil dari kardus lain yang tampilannya sangat mirip (status <c>InferredByAppearance</c>).</summary>
+    public const string SkuInferredByAppearance = "SKU_INFERRED_BY_APPEARANCE";
 }

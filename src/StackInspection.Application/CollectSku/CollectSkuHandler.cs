@@ -20,18 +20,21 @@ public sealed record SkuReading(string Sku, string? OcrText, double Confidence, 
 /// <summary>
 /// Pipeline Collect SKU: validasi upload → decode → photo gate → deteksi → buang kotak bersarang →
 /// filter lapisan depan → OCR sekali untuk semua kardus → teks dicocokkan ke kardus berdasarkan posisi
-/// (area label dulu, fallback seluruh kardus) → fuzzy match → grid.
+/// (area label dulu, fallback seluruh kardus) → fuzzy match → koreksi mayoritas → lengkapi potongan nomor →
+/// SKU dari kardus yang tampilannya mirip → grid.
 /// </summary>
 public sealed partial class CollectSkuHandler
 {
     private const int MinSkuDigits = 7;
     private const int MaxSkuDigits = 9;
+    private const int MaxPartialDigits = MinSkuDigits;
     private static readonly char[] WordSeparators = [' ', '\t', ':', ';', ',', '/'];
 
     private readonly IImageDecoder _decoder;
     private readonly ICartonDetector _detector;
     private readonly IModelCatalog _models;
     private readonly ISkuLabelReader _reader;
+    private readonly ICartonEmbedder _embedder;
     private readonly PhotoInspectabilityService _inspectability;
     private readonly VisionOptions _vision;
     private readonly FrontLayerOptions _frontLayer;
@@ -44,6 +47,7 @@ public sealed partial class CollectSkuHandler
         ICartonDetector detector,
         IModelCatalog models,
         ISkuLabelReader reader,
+        ICartonEmbedder embedder,
         PhotoInspectabilityService inspectability,
         IOptions<VisionOptions> vision,
         IOptions<FrontLayerOptions> frontLayer,
@@ -59,6 +63,7 @@ public sealed partial class CollectSkuHandler
         _detector = detector;
         _models = models;
         _reader = reader;
+        _embedder = embedder;
         _inspectability = inspectability;
         _vision = vision.Value;
         _frontLayer = frontLayer.Value;
@@ -119,6 +124,12 @@ public sealed partial class CollectSkuHandler
             majorityCorrected = corrected.Where((r, i) => r != readings[i]).Any();
             readings = corrected;
         }
+
+        IReadOnlyList<SkuReading> completed = PartialReadMatch.Apply(
+            readings, [.. front.Kept.Select(c => PartialDigits(c.Box, texts))], candidates, _vision.PartialReadMinDigits);
+        bool partialCorrected = completed.Where((r, i) => r != readings[i]).Any();
+        readings = completed;
+        readings = await InferByAppearanceAsync(image, front.Kept, readings, cancellationToken).ConfigureAwait(false);
         long ocrMs = stopwatch.ElapsedMilliseconds;
         LogTimings(
             _logger, decodeMs, inspectMs - decodeMs, detectMs - inspectMs, ocrMs - detectMs, front.Kept.Count, texts.Count);
@@ -157,7 +168,7 @@ public sealed partial class CollectSkuHandler
             Cells = cells,
             Stacks = BuildStacks(cells),
             DistinctSkus = BuildDistinct(cells),
-            Warnings = BuildWarnings(front, layout, cells, majorityCorrected),
+            Warnings = BuildWarnings(front, layout, cells, majorityCorrected, partialCorrected),
             ProcessingTimeMs = stopwatch.ElapsedMilliseconds,
         };
     }
@@ -235,6 +246,44 @@ public sealed partial class CollectSkuHandler
             .Select(v => SkuMatcher.NormalizeDigits(v.Candidate))
             .Where(d => d.Length is >= MinSkuDigits and <= MaxSkuDigits)
             .Distinct(StringComparer.Ordinal)];
+
+    /// <summary>
+    /// Potongan nomor (kata yang seluruh karakternya digit atau huruf mirip digit) yang lebih pendek dari SKU,
+    /// misalnya "1972453" dari label yang terpotong. Kata seperti "12x700g" tidak dipakai.
+    /// </summary>
+    private static IReadOnlyList<string> PartialDigits(BoundingBox box, IReadOnlyList<OcrText> texts) =>
+        [.. texts
+            .Where(t => t.Box is BoundingBox position && Contains(box, position.CenterX, position.CenterY))
+            .SelectMany(t => t.Text.Split(WordSeparators, StringSplitOptions.RemoveEmptyEntries))
+            .Where(word => SkuMatcher.NormalizeDigits(word).Length == word.Length && word.Length <= MaxPartialDigits)
+            .Select(SkuMatcher.NormalizeDigits)
+            .Distinct(StringComparer.Ordinal)];
+
+    /// <summary>
+    /// Kardus tanpa SKU terbaca diberi SKU kardus lain yang tampilannya sangat mirip (Vision:Appearance*).
+    /// Embedder hanya dipanggil jika aktif dan ada kardus terbaca maupun tidak terbaca.
+    /// </summary>
+    private async Task<IReadOnlyList<SkuReading>> InferByAppearanceAsync(
+        VisionImage image, IReadOnlyList<CartonBox> cartons, IReadOnlyList<SkuReading> readings, CancellationToken cancellationToken)
+    {
+        bool hasUnread = readings.Any(r => r.Status is ReadStatus.Unknown or ReadStatus.LabelNotVisible);
+        bool hasRead = readings.Any(r => r.Status is ReadStatus.Matched or ReadStatus.Corrected);
+        if (string.IsNullOrWhiteSpace(_vision.AppearanceModel) || !hasUnread || !hasRead)
+        {
+            return readings;
+        }
+
+        IReadOnlyList<float[]> embeddings = await _embedder
+            .EmbedAsync(image, [.. cartons.Select(c => c.Box)], cancellationToken)
+            .ConfigureAwait(false);
+        IReadOnlyList<SkuReading> inferred = AppearanceInference.Apply(
+            readings, embeddings, _vision.AppearanceMinSimilarity, _vision.AppearanceMinReferences, _vision.AppearanceMinMargin);
+        LogAppearance(
+            _logger,
+            inferred.Count(r => r.Status == ReadStatus.InferredByAppearance),
+            readings.Count(r => r.Status is ReadStatus.Unknown or ReadStatus.LabelNotVisible));
+        return inferred;
+    }
 
     private static bool Contains(BoundingBox box, double x, double y) =>
         x >= box.X1 && x <= box.X2 && y >= box.Y1 && y <= box.Y2;
@@ -339,7 +388,8 @@ public sealed partial class CollectSkuHandler
             .OrderByDescending(d => d.Count)
             .ThenBy(d => d.Sku, StringComparer.Ordinal)];
 
-    private List<string> BuildWarnings(FrontLayerResult front, GridLayout layout, List<CellDto> cells, bool majorityCorrected)
+    private List<string> BuildWarnings(
+        FrontLayerResult front, GridLayout layout, List<CellDto> cells, bool majorityCorrected, bool partialCorrected)
     {
         List<string> warnings = [];
         if (front.Kept.Any(c => c.Confidence < _vision.LowConfidenceThreshold))
@@ -372,6 +422,16 @@ public sealed partial class CollectSkuHandler
             warnings.Add(CollectWarnings.SkuCorrectedByMajority);
         }
 
+        if (partialCorrected)
+        {
+            warnings.Add(CollectWarnings.SkuCorrectedByPartialRead);
+        }
+
+        if (cells.Exists(c => c.ReadStatus == ReadStatus.InferredByAppearance))
+        {
+            warnings.Add(CollectWarnings.SkuInferredByAppearance);
+        }
+
         return warnings;
     }
 
@@ -385,4 +445,9 @@ public sealed partial class CollectSkuHandler
         Level = LogLevel.Information,
         Message = "Fast reject: gate {Gate} setelah {ElapsedMs} ms ({Cartons} kardus terdeteksi)")]
     private static partial void LogFastReject(ILogger logger, string gate, long elapsedMs, int cartons);
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "Appearance inference: {Inferred} dari {Unread} kardus tanpa SKU terbaca diisi dari kardus mirip")]
+    private static partial void LogAppearance(ILogger logger, int inferred, int unread);
 }

@@ -64,6 +64,31 @@ public sealed class VisionOptions
     [Range(0, 4)]
     public int MajorityMaxDistance { get; set; } = 1;
 
+    /// <summary>
+    /// Potongan nomor SKU (label terpotong/tertutup) minimal sekian digit dilengkapi dari SKU yang terbaca utuh
+    /// di foto atau dari <c>candidateSkus</c>. 0 = nonaktif.
+    /// </summary>
+    [Range(0, 7)]
+    public int PartialReadMinDigits { get; set; } = 5;
+
+    /// <summary>
+    /// Nama subfolder model embedder tampilan kardus di <see cref="ModelsDirectory"/> (mis. <c>carton-embed-v1</c>).
+    /// Kardus yang labelnya tidak terbaca diberi SKU kardus lain yang sangat mirip. Kosong = nonaktif.
+    /// </summary>
+    public string AppearanceModel { get; set; } = string.Empty;
+
+    /// <summary>Kemiripan tampilan (cosine) minimal ke kardus acuan.</summary>
+    [Range(0.5, 1.0)]
+    public double AppearanceMinSimilarity { get; set; } = 0.95;
+
+    /// <summary>Jumlah kardus acuan ber-SKU sama yang harus lolos <see cref="AppearanceMinSimilarity"/>.</summary>
+    [Range(1, 10)]
+    public int AppearanceMinReferences { get; set; } = 2;
+
+    /// <summary>Selisih kemiripan minimal antara SKU terbaik dan SKU lain.</summary>
+    [Range(0.0, 0.5)]
+    public double AppearanceMinMargin { get; set; } = 0.05;
+
     [Range(0.0, 1.0)]
     public double LowConfidenceThreshold { get; set; } = 0.6;
 
