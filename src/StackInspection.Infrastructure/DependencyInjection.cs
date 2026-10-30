@@ -25,11 +25,13 @@ public static class DependencyInjection
         services.AddSingleton<FakeSkuLabelReader>();
         services.AddSingleton<FakeTextSpotter>();
         services.AddSingleton<FakeModelCatalog>();
+        services.AddSingleton<FakePhotoClassifier>();
 
         services.AddSingleton<OpenCvImageDecoder>();
         services.AddSingleton<OnnxCartonDetector>();
         services.AddSingleton<PaddleOcrTextReader>();
         services.AddSingleton<FileSystemModelCatalog>();
+        services.AddSingleton<OnnxPhotoClassifier>();
 
         services.AddSingleton<IModelCatalog>(sp => UseFake(sp)
             ? sp.GetRequiredService<FakeModelCatalog>()
@@ -47,6 +49,9 @@ public static class DependencyInjection
         services.AddSingleton<ITextSpotter>(sp => UseFake(sp)
             ? sp.GetRequiredService<FakeTextSpotter>()
             : sp.GetRequiredService<PaddleOcrTextReader>());
+        services.AddSingleton<IPhotoClassifier>(sp => UseFake(sp)
+            ? sp.GetRequiredService<FakePhotoClassifier>()
+            : sp.GetRequiredService<OnnxPhotoClassifier>());
         return services;
     }
 

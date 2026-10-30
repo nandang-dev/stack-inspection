@@ -122,6 +122,13 @@ public sealed class FakeTextSpotter(FakeVisionFixtureProvider provider) : ITextS
         Task.FromResult<IReadOnlyList<OcrText>>([.. provider.Fixture.OverlayTexts.Select(t => new OcrText(t, 0.99))]);
 }
 
+/// <summary>Classifier palsu: semua foto dianggap layak (p(tolak) = 0).</summary>
+public sealed class FakePhotoClassifier : IPhotoClassifier
+{
+    public Task<double> RejectProbabilityAsync(VisionImage image, CancellationToken cancellationToken) =>
+        Task.FromResult(0.0);
+}
+
 /// <summary>Katalog berisi satu model palsu (dan model default dari konfigurasi).</summary>
 public sealed class FakeModelCatalog : IModelCatalog
 {
