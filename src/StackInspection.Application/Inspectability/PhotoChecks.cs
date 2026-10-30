@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using StackInspection.Application.Abstractions;
 using StackInspection.Application.Configuration;
@@ -47,7 +48,54 @@ public sealed class ResolutionCheck : IPhotoInspectabilityCheck
 }
 
 /// <summary>
-/// Gate 2: tolak foto dengan stempel aplikasi kamera di strip atas/bawah.
+/// Gate 2: classifier kelayakan foto (fast reject). Tolak jika p(tolak) ≥ Photo:ClassifierRejectThreshold,
+/// tanpa alasan spesifik (<see cref="PhotoRejectReasons.FastRejected"/>); di bawah ambang (ragu) foto lolos.
+/// Hanya berjalan jika <see cref="PhotoOptions.ClassifierModel"/> diisi. Skor setiap foto dicatat di log.
+/// </summary>
+public sealed partial class InspectabilityClassifierCheck : IPhotoInspectabilityCheck
+{
+    private readonly IPhotoClassifier _classifier;
+    private readonly PhotoOptions _options;
+    private readonly ILogger<InspectabilityClassifierCheck> _logger;
+
+    public InspectabilityClassifierCheck(
+        IPhotoClassifier classifier, IOptions<PhotoOptions> options, ILogger<InspectabilityClassifierCheck> logger)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        _classifier = classifier;
+        _options = options.Value;
+        _logger = logger;
+    }
+
+    public int Order => 2;
+
+    public async Task CheckAsync(VisionImage image, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(image);
+        if (string.IsNullOrWhiteSpace(_options.ClassifierModel))
+        {
+            return;
+        }
+
+        double pReject = await _classifier.RejectProbabilityAsync(image, cancellationToken).ConfigureAwait(false);
+        bool rejected = pReject >= _options.ClassifierRejectThreshold;
+        LogScore(_logger, _options.ClassifierModel, pReject, _options.ClassifierRejectThreshold, rejected);
+        if (rejected)
+        {
+            throw new PhotoNotInspectableException(
+                PhotoRejectReasons.FastRejected,
+                "Foto tidak layak dinilai. Ambil ulang foto muatan dari depan, cukup dekat, dan jelas.");
+        }
+    }
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "Fast reject classifier {Model}: p(tolak) {PReject:0.0000}, ambang {Threshold}, ditolak {Rejected}")]
+    private static partial void LogScore(ILogger logger, string model, double pReject, double threshold, bool rejected);
+}
+
+/// <summary>
+/// Gate 3: tolak foto dengan stempel aplikasi kamera di strip atas/bawah.
 /// Hanya berjalan jika <see cref="PhotoOptions.CameraOverlayEnabled"/>.
 /// </summary>
 public sealed class CameraOverlayCheck : IPhotoInspectabilityCheck
@@ -62,7 +110,7 @@ public sealed class CameraOverlayCheck : IPhotoInspectabilityCheck
         _options = options.Value;
     }
 
-    public int Order => 2;
+    public int Order => 3;
 
     public async Task CheckAsync(VisionImage image, CancellationToken cancellationToken)
     {

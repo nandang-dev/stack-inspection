@@ -112,6 +112,16 @@ public sealed class PhotoOptions
     [Range(1, 10)]
     public int OverlayMinKeywordHits { get; set; } = 2;
 
+    /// <summary>
+    /// Fast reject: nama subfolder model classifier kelayakan foto di <c>Vision:ModelsDirectory</c>
+    /// (mis. <c>fast-reject-v3</c>). Kosong = gate classifier nonaktif.
+    /// </summary>
+    public string ClassifierModel { get; set; } = string.Empty;
+
+    /// <summary>Fast reject: foto ditolak jika p(tolak) classifier ≥ nilai ini. Di bawahnya (ragu) foto lolos.</summary>
+    [Range(0.5, 1.0)]
+    public double ClassifierRejectThreshold { get; set; } = 0.7565;
+
     /// <summary>Fast reject: jumlah kardus terdeteksi minimal (setelah buang kotak bersarang). 0 = nonaktif.</summary>
     [Range(0, 1000)]
     public int MinCartonCount { get; set; } = 5;

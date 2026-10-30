@@ -49,6 +49,7 @@ tidak di-commit) cukup untuk development. Vision asli diuji di Linux (Docker) da
 | `Photo:MinLongSide` / `MinMegapixels` | 2048 / 2.0 | Gate resolusi: sisi terpanjang (px) **dan** jumlah piksel (MP) minimal. `MinMegapixels` 0 = tidak dicek |
 | `Photo:CameraOverlayEnabled` | false | Gate stempel kamera berbasis OCR. Default mati karena memakan ±100 detik per foto (OCR penuh di strip atas & bawah); akan digantikan classifier kelayakan foto |
 | `Photo:OverlayKeywords` | GPS Map Camera, Timemark, Lat, Long, Kode Foto | Kata kunci gate stempel kamera (hanya jika `CameraOverlayEnabled`) |
+| `Photo:ClassifierModel` / `ClassifierRejectThreshold` | `fast-reject-v3` / 0.7565 | Fast reject classifier (MobileNetV3, ±3 ms/foto) dijalankan setelah gate resolusi, sebelum deteksi: foto ditolak (`FAST_REJECTED`) jika p(tolak) ≥ ambang; di bawahnya (ragu) lolos. Model = subfolder di `Vision:ModelsDirectory` (model card `task` berisi "classifier", tidak muncul di daftar model deteksi). Skor setiap foto dicatat di log `Fast reject classifier ...`. Kosong = nonaktif. Validasi silang fast-reject-v3 di ambang 0.7565: 1/65 foto layak tertolak, 72% foto tidak layak tertangkap |
 | `Photo:MinCartonCount` / `MinCartonCoverage` | 5 / 0.08 | Fast reject sebelum OCR: foto ditolak (`FAST_REJECTED`) jika kardus terdeteksi < 5 atau total luas kotak kardus < 8% luas foto (bukan muatan, kontainer kosong, terlalu jauh). Gate yang menolak dicatat di log `Fast reject: gate ...`. 0 = nonaktif |
 | `FrontLayer:MinWidthRatio` / `MaxGapRatio` | 0.6 / 0.35 | Filter lapisan belakang |
 | `FrontLayer:MinTopHeightRatio` | 0.55 | Kotak teratas tumpukan yang tingginya < rasio ini × kardus di bawahnya dianggap lapisan belakang (0 = nonaktif) |
@@ -66,6 +67,9 @@ File model **tidak di-commit** dan **tidak ikut di image** (sesuai brief). Lokas
     model-card.json       ← inputSize, recommendedThresholds, metrik, status
   carton-v2/
     ...
+  fast-reject-v3/         ← classifier fast reject (Photo:ClassifierModel), bukan model deteksi
+    fast-reject-v3.onnx
+    model-card.json       ← task "fast-reject classifier ...", recommendedRejectThreshold
 ```
 
 - Nama subfolder = nama model di `GET /api/v1/models`, dropdown Swagger, dan field `model` Collect SKU.
@@ -77,6 +81,13 @@ File model **tidak di-commit** dan **tidak ikut di image** (sesuai brief). Lokas
 
 Menambah model baru: salin `carton-vN.onnx` dan `model-card.json` dari
 `carton-trainer/registry/models/carton-vN/` ke `<ModelsDirectory>/carton-vN/`, lalu restart.
+
+Classifier fast reject: salin folder `carton-trainer/registry/models/fast-reject-vN/` (cukup `.onnx` +
+`model-card.json`) ke `<ModelsDirectory>/fast-reject-vN/`, set `Photo:ClassifierModel` dan
+`Photo:ClassifierRejectThreshold` (= `recommendedRejectThreshold` di model card), lalu restart. Jika folder tidak
+ada padahal `Photo:ClassifierModel` terisi, Collect SKU gagal 500 — kosongkan setting untuk menonaktifkan.
+Input `images` `[1,3,320,320]` float32 RGB 0–1 (resize langsung tanpa letterbox, INTER_AREA), output `probs` `[1,2]`,
+index 1 = p(tolak).
 
 ## Format model (YOLOX dari Carton Trainer)
 
