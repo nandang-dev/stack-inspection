@@ -21,7 +21,7 @@ public sealed record SkuReading(string Sku, string? OcrText, double Confidence, 
 /// Pipeline Collect SKU: validasi upload → decode → photo gate → deteksi → buang kotak bersarang →
 /// filter lapisan depan → OCR sekali untuk semua kardus → teks dicocokkan ke kardus berdasarkan posisi
 /// (area label dulu, fallback seluruh kardus) → fuzzy match → koreksi mayoritas → lengkapi potongan nomor →
-/// SKU dari kardus yang tampilannya mirip → grid.
+/// SKU dari kardus yang tampilannya mirip → grid tampilan + relasi tumpuan (satu entri cell per sel grid).
 /// </summary>
 public sealed partial class CollectSkuHandler
 {
@@ -143,28 +143,51 @@ public sealed partial class CollectSkuHandler
             texts.Count);
 
         GridLayout layout = GridBuilder.Build([.. front.Kept.Select(c => c.Box)]);
+        // id kardus diurutkan dari kiri-atas agar mudah dibaca; restsOn ikut dipetakan ke id
+        int[] ids = new int[front.Kept.Count];
+        int nextId = 0;
+        foreach (int index in Enumerable.Range(0, front.Kept.Count)
+            .OrderBy(i => layout.Cartons[i].Cells[0].Row)
+            .ThenBy(i => layout.Cartons[i].Cells[0].Column))
+        {
+            ids[index] = nextId++;
+        }
+
         List<CellDto> cells = [];
         for (int i = 0; i < front.Kept.Count; i++)
         {
             CartonBox carton = front.Kept[i];
-            GridPosition position = layout.Positions[i];
+            CartonPlacement placement = layout.Cartons[i];
             SkuReading reading = readings[i];
-            cells.Add(new CellDto
+            int[] restsOn = [.. placement.RestsOn.Select(r => ids[r]).Order()];
+            foreach (GridCell grid in placement.Cells)
             {
-                Row = position.Row,
-                Column = position.Column,
-                Level = position.Level,
-                Sku = reading.Sku,
-                OcrText = reading.OcrText,
-                OcrConfidence = Math.Round(reading.Confidence, 4),
-                DetectionConfidence = Math.Round(carton.Confidence, 4),
-                ReadStatus = reading.Status,
-                BoundingBox = ToDto(carton.Box),
-            });
+                cells.Add(new CellDto
+                {
+                    Id = ids[i],
+                    Row = grid.Row,
+                    Column = grid.Column,
+                    Level = placement.Level,
+                    RestsOn = restsOn,
+                    Sku = reading.Sku,
+                    OcrText = reading.OcrText,
+                    OcrConfidence = Math.Round(reading.Confidence, 4),
+                    DetectionConfidence = Math.Round(carton.Confidence, 4),
+                    ReadStatus = reading.Status,
+                    BoundingBox = ToDto(carton.Box),
+                });
+            }
         }
 
-        cells = [.. cells.OrderBy(c => c.Row).ThenBy(c => c.Column)];
-        List<StackDto> stacks = BuildStacks(cells);
+        cells = [.. cells.OrderBy(c => c.Row).ThenBy(c => c.Column).ThenBy(c => c.Id)];
+        List<StackDto> stacks = [.. layout.Paths.BottomToTop.Select((path, p) => new StackDto
+        {
+            Path = p,
+            Column = layout.Cartons[path[0]].Cells.Min(c => c.Column),
+            Height = path.Count,
+            CartonIdsBottomToTop = [.. path.Select(i => ids[i])],
+            SkusBottomToTop = [.. path.Select(i => readings[i].Sku)],
+        })];
         List<DistinctSkuDto> distinctSkus = BuildDistinct(cells);
         List<string> warnings = BuildWarnings(front, layout, cells, majorityCorrected, partialCorrected);
         long totalMs = stopwatch.ElapsedMilliseconds;
@@ -391,19 +414,10 @@ public sealed partial class CollectSkuHandler
         Y2 = (int)Math.Round(box.Y2),
     };
 
-    private static List<StackDto> BuildStacks(List<CellDto> cells) =>
-        [.. cells
-            .GroupBy(c => c.Column)
-            .OrderBy(g => g.Key)
-            .Select(g => new StackDto
-            {
-                Column = g.Key,
-                Height = g.Count(),
-                SkusBottomToTop = [.. g.OrderBy(c => c.Level).Select(c => c.Sku)],
-            })];
-
+    /// <summary>Jumlah kardus (id unik, bukan jumlah sel) per SKU.</summary>
     private static List<DistinctSkuDto> BuildDistinct(List<CellDto> cells) =>
         [.. cells
+            .DistinctBy(c => c.Id)
             .GroupBy(c => c.Sku, StringComparer.Ordinal)
             .Select(g => new DistinctSkuDto { Sku = g.Key, Count = g.Count() })
             .OrderByDescending(d => d.Count)
@@ -431,6 +445,11 @@ public sealed partial class CollectSkuHandler
         if (layout.IsIrregular)
         {
             warnings.Add(CollectWarnings.IrregularGrid);
+        }
+
+        if (layout.Paths.Truncated)
+        {
+            warnings.Add(CollectWarnings.StackPathsTruncated);
         }
 
         if (front.ExcludedCount > 0)

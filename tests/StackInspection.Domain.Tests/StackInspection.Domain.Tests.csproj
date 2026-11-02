@@ -17,4 +17,7 @@
   <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
+  <ItemGroup>
+    <Content Include="..\..\fixtures\golden-v3-layout.json" Link="fixtures\golden-v3-layout.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

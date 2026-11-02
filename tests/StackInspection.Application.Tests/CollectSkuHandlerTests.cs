@@ -56,6 +56,35 @@ public class CollectSkuHandlerTests
         Assert.Equal(result.ProcessingTimeMs, stages.Sum());
     }
 
+    [Fact]
+    public async Task WideCartonOverTwoStacks_AppearsInTwoCellsWithSameId()
+    {
+        // dua kardus di lantai, satu kardus lebar di atas keduanya
+        CartonBox left = Build.Carton(300, 1000);
+        CartonBox right = Build.Carton(710, 1000);
+        CartonBox wide = Build.Carton(300, 690, w: 810);
+        Dictionary<BoundingBox, (string?, string?)> texts = new()
+        {
+            [left.Box] = ("68140913", null), [right.Box] = ("68140913", null), [wide.Box] = ("68410975", null),
+        };
+        CollectSkuHandler handler = Build.Handler(new StubDecoder(3000, 4000), new StubDetector([left, right, wide]), new StubReader(texts));
+
+        CollectSkuResponse result = await handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None);
+
+        Assert.Equal((4, 2, 2), (result.Cells.Count, result.RowCount, result.ColumnCount));
+        CellDto[] top = [.. result.Cells.Where(c => c.Row == 0)];
+        Assert.Equal(2, top.Length);
+        Assert.Single(top.Select(c => c.Id).Distinct());
+        Assert.Equal([0, 1], top.Select(c => c.Column));
+        Assert.All(top, c => Assert.Equal((1, "68410975"), (c.Level, c.Sku)));
+        int[] bottomIds = [.. result.Cells.Where(c => c.Row == 1).Select(c => c.Id!.Value)];
+        Assert.All(top, c => Assert.Equal(bottomIds.Order(), c.RestsOn!));
+        Assert.Equal([("68140913", 2), ("68410975", 1)], result.DistinctSkus.Select(d => (d.Sku, d.Count)));
+        Assert.Equal(2, result.Stacks.Count);
+        Assert.All(result.Stacks, s => Assert.Equal(top[0].Id, s.CartonIdsBottomToTop[^1]));
+        Assert.Contains(CollectWarnings.IrregularGrid, result.Warnings);
+    }
+
     [Theory]
     [InlineData(1600, 1200)] // sisi terpanjang < 2048
     [InlineData(2048, 900)] // sisi terpanjang cukup, tapi 1.84 MP < 2 MP

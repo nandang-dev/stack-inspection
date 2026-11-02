@@ -4,13 +4,33 @@ API untuk menilai kualitas tumpukan kardus di truk/kontainer dari sebuah foto (b
 `../brief/BRIEF-stack-inspection-api-v2.md`).
 
 1. `POST /api/v1/stack-inspections/collect-sku` — cek kelayakan foto, deteksi kardus lapisan depan (YOLOX
-   ONNX dari Carton Trainer), baca SKU (PaddleOCR PP-OCRv5), susun baris/kolom.
+   ONNX dari Carton Trainer), baca SKU (PaddleOCR PP-OCRv5), susun grid tampilan + relasi tumpuan.
    Field opsional `model` memilih model deteksi (dropdown di Swagger); kosong = model default.
 2. `GET /api/v1/models` — daftar model deteksi yang tersedia (nama, input size, threshold, status, metrik).
 3. `POST /api/v1/stack-inspections/analyze` — hitung pelanggaran (`UNKNOWN_SKU`, `LABEL_NOT_VISIBLE`,
    `MAX_STACK_EXCEEDED`, `CLASS_POSITION_INVALID`) dan skor.
 
 Swagger UI: `/swagger` (aktif jika `Swagger:Enabled = true`). Health check: `/health`.
+
+## Layout tumpukan (`cells`, `stacks`)
+
+Setiap kardus punya dua lapis informasi (rencana: `../brief/PLAN-stack-layout-engine.md`):
+
+| Lapis | Field | Untuk |
+|---|---|---|
+| Tampilan | `row`, `column` | Sel grid untuk menggambar ulang layout foto di UI |
+| Fisik | `id`, `restsOn`, `level` | Aturan bisnis: kardus ini menumpu di atas kardus mana |
+
+- `cells` berisi **satu entri per sel grid**. Kardus besar/lebar menempati beberapa sel dan muncul beberapa
+  kali dengan isi dan `id` yang sama; UI menggabungkan sel ber-id sama menjadi satu kotak.
+  Jumlah kardus = jumlah `id` unik, bukan `cells.length`.
+- `restsOn` = `id` kardus yang langsung ditumpu (kosong = di lantai; lebih dari satu = kardus menjembatani
+  beberapa tumpukan). `level` = 0 di lantai, selain itu 1 + level tertinggi kardus di `restsOn`.
+- `stacks` = jalur dari lantai sampai kardus teratas mengikuti `restsOn` (maks. 200, lebih dari itu muncul
+  warning `STACK_PATHS_TRUNCATED`). Kardus yang dipakai bersama muncul di setiap jalur yang melewatinya.
+- Analyze menilai per jalur: `maxStack` = jumlah kardus SKU sama di satu jalur; kelas dibandingkan dengan semua
+  kardus di bawahnya mengikuti `restsOn`. Pelanggaran menunjuk `cartonId`. `collectResult` versi lama (tanpa
+  `id`/`restsOn`) ditolak 400.
 
 ## Struktur
 
