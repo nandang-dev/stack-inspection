@@ -61,11 +61,31 @@ public static class AppearanceInference
             double runnerUp = ranked.Length > 1 ? ranked[1].Value.Best : double.NegativeInfinity;
             if (ranked[0].Value.Best - runnerUp >= minMargin)
             {
-                result[i] = readings[i] with { Sku = ranked[0].Key, Status = ReadStatus.InferredByAppearance };
+                // Confidence = kemiripan tampilan ke acuan terbaik (bukan keyakinan OCR)
+                result[i] = readings[i] with { Sku = ranked[0].Key, Confidence = ranked[0].Value.Best, Status = ReadStatus.InferredByAppearance };
             }
         }
 
         return result;
+    }
+
+    /// <summary>Kemiripan tertinggi kardus <paramref name="index"/> ke kardus terbaca ber-SKU <paramref name="sku"/>.</summary>
+    public static double BestSimilarity(
+        IReadOnlyList<SkuReading> readings, IReadOnlyList<float[]> embeddings, int index, string sku)
+    {
+        ArgumentNullException.ThrowIfNull(readings);
+        ArgumentNullException.ThrowIfNull(embeddings);
+        double best = double.NegativeInfinity;
+        for (int j = 0; j < readings.Count; j++)
+        {
+            if (j != index && readings[j].Status is ReadStatus.Matched or ReadStatus.Corrected
+                && string.Equals(readings[j].Sku, sku, StringComparison.Ordinal))
+            {
+                best = Math.Max(best, Dot(embeddings[index], embeddings[j]));
+            }
+        }
+
+        return best;
     }
 
     public static double Dot(float[] a, float[] b)

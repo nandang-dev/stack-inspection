@@ -1,4 +1,6 @@
+using StackInspection.Application.Abstractions;
 using StackInspection.Application.CollectSku;
+using StackInspection.Application.Configuration;
 using StackInspection.Application.Contracts;
 using StackInspection.Application.Exceptions;
 using StackInspection.Domain;
@@ -40,6 +42,49 @@ public class CollectSkuHandlerTests
         Assert.Equal(6, distinct.Count);
         Assert.Equal([0, 1, 2], result.Stacks[0].SkusBottomToTop.Select((_, i) => i));
         Assert.Empty(result.Warnings);
+    }
+
+    [Fact]
+    public async Task ValidPhoto_ReturnsTimingsThatSumToProcessingTime()
+    {
+        (List<CartonBox> cartons, Dictionary<BoundingBox, (string?, string?)> texts) = Grid(2, 2, "68140913");
+        CollectSkuHandler handler = Build.Handler(new StubDecoder(3000, 4000), new StubDetector(cartons), new StubReader(texts));
+
+        CollectSkuResponse result = await handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None);
+
+        CollectSkuTimingsDto t = result.Timings;
+        long[] stages = [t.DecodeMs, t.InspectMs, t.DetectMs, t.OcrMs, t.SkuResolveMs, t.BuildMs];
+        Assert.All(stages, ms => Assert.True(ms >= 0));
+        Assert.Equal(result.ProcessingTimeMs, stages.Sum());
+    }
+
+    [Fact]
+    public async Task WideCartonOverTwoStacks_AppearsInTwoCellsWithSameId()
+    {
+        // dua kardus di lantai, satu kardus lebar di atas keduanya
+        CartonBox left = Build.Carton(300, 1000);
+        CartonBox right = Build.Carton(710, 1000);
+        CartonBox wide = Build.Carton(300, 690, w: 810);
+        Dictionary<BoundingBox, (string?, string?)> texts = new()
+        {
+            [left.Box] = ("68140913", null), [right.Box] = ("68140913", null), [wide.Box] = ("68410975", null),
+        };
+        CollectSkuHandler handler = Build.Handler(new StubDecoder(3000, 4000), new StubDetector([left, right, wide]), new StubReader(texts));
+
+        CollectSkuResponse result = await handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None);
+
+        Assert.Equal((4, 2, 2), (result.Cells.Count, result.RowCount, result.ColumnCount));
+        CellDto[] top = [.. result.Cells.Where(c => c.Row == 0)];
+        Assert.Equal(2, top.Length);
+        Assert.Single(top.Select(c => c.Id).Distinct());
+        Assert.Equal([0, 1], top.Select(c => c.Column));
+        Assert.All(top, c => Assert.Equal((1, "68410975"), (c.Level, c.Sku)));
+        int[] bottomIds = [.. result.Cells.Where(c => c.Row == 1).Select(c => c.Id!.Value)];
+        Assert.All(top, c => Assert.Equal(bottomIds.Order(), c.RestsOn!));
+        Assert.Equal([("68140913", 2), ("68410975", 1)], result.DistinctSkus.Select(d => (d.Sku, d.Count)));
+        Assert.Equal(2, result.Stacks.Count);
+        Assert.All(result.Stacks, s => Assert.Equal(top[0].Id, s.CartonIdsBottomToTop[^1]));
+        Assert.Contains(CollectWarnings.IrregularGrid, result.Warnings);
     }
 
     [Theory]
@@ -121,6 +166,92 @@ public class CollectSkuHandlerTests
     }
 
     [Fact]
+    public async Task OcrDefault_ReadsOnlyLabelAreas()
+    {
+        CartonBox labelled = Build.Carton(300, 600);
+        CartonBox textElsewhere = Build.Carton(710, 600);
+        Dictionary<BoundingBox, (string?, string?)> texts = new()
+        {
+            [labelled.Box] = ("68410975", null),
+            [textElsewhere.Box] = (null, "68582213"), // nomor hanya di bagian bawah kardus
+        };
+        StubReader reader = new(texts);
+        CollectSkuHandler handler = Build.Handler(new StubDecoder(3000, 4000), new StubDetector([labelled, textElsewhere]), reader);
+
+        CollectSkuResponse result = await handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, ["68410975", "68582213"]), None);
+
+        Assert.Equal(1, reader.Calls);
+        // area label = 60 % lebar × 30 % tinggi kiri-atas kardus (400 × 300)
+        Assert.All(reader.LastRegions, r => Assert.Equal((240.0, 90.0), (r.Width, r.Height)));
+        Dictionary<int, CellDto> byColumn = result.Cells.ToDictionary(c => c.Column);
+        Assert.Equal(ReadStatus.Matched, byColumn[0].ReadStatus);
+        Assert.Equal(ReadStatus.LabelNotVisible, byColumn[1].ReadStatus);
+    }
+
+    [Fact]
+    public async Task OcrFullCartonFallback_RereadsOnlyUnreadCartons()
+    {
+        CartonBox labelled = Build.Carton(300, 600);
+        CartonBox textElsewhere = Build.Carton(710, 600);
+        Dictionary<BoundingBox, (string?, string?)> texts = new()
+        {
+            [labelled.Box] = ("68410975", null),
+            [textElsewhere.Box] = (null, "68582213"),
+        };
+        StubReader reader = new(texts);
+        CollectSkuHandler handler = Build.Handler(
+            new StubDecoder(3000, 4000), new StubDetector([labelled, textElsewhere]), reader, ocrFullCartonFallback: true);
+
+        CollectSkuResponse result = await handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, ["68410975", "68582213"]), None);
+
+        Assert.Equal(2, reader.Calls);
+        Assert.Equal(textElsewhere.Box, Assert.Single(reader.LastRegions)); // tahap 2 hanya kardus yang belum terbaca
+        Assert.All(result.Cells, c => Assert.Equal(ReadStatus.Matched, c.ReadStatus));
+    }
+
+    private static readonly OcrScanOptions[] TwoScans =
+    [
+        new() { WidthRatio = 0.6, HeightRatio = 0.3, MinAreaWidth = 320 },
+        new() { WidthRatio = 1.0, HeightRatio = 0.4, MinAreaWidth = 480 },
+    ];
+
+    [Fact]
+    public async Task OcrRetryScans_EachScanOnlyForCartonsStillUnread()
+    {
+        CartonBox labelled = Build.Carton(300, 600);
+        CartonBox small = Build.Carton(710, 600);
+        CartonBox smaller = Build.Carton(1120, 600);
+        StubReader reader = new(new Dictionary<BoundingBox, (string?, string?)> { [labelled.Box] = ("68410975", null) });
+        reader.EnlargedOnly[small.Box] = ("68582213", 320); // terbaca di scan pertama
+        reader.EnlargedOnly[smaller.Box] = ("68140913", 480); // baru terbaca di scan kedua
+        CollectSkuHandler handler = Build.Handler(
+            new StubDecoder(3000, 4000), new StubDetector([labelled, small, smaller]), reader, ocrRetryScans: TwoScans);
+
+        CollectSkuResponse result = await handler.HandleAsync(
+            new CollectSkuCommand(Build.Jpeg, ["68410975", "68582213", "68140913"]), None);
+
+        Assert.Equal([0, 320, 480], reader.Scans);
+        // scan kedua hanya kardus yang masih belum terbaca: selebar kardus × 40 % tinggi
+        Assert.Equal(new BoundingBox(1120, 600, 1520, 720), Assert.Single(reader.LastRegions));
+        Assert.All(result.Cells, c => Assert.Equal(ReadStatus.Matched, c.ReadStatus));
+    }
+
+    [Fact]
+    public async Task OcrRetryScans_StopWhenAllCartonsRead()
+    {
+        CartonBox labelled = Build.Carton(300, 600);
+        CartonBox small = Build.Carton(710, 600);
+        StubReader reader = new(new Dictionary<BoundingBox, (string?, string?)> { [labelled.Box] = ("68410975", null) });
+        reader.EnlargedOnly[small.Box] = ("68582213", 320);
+        CollectSkuHandler handler = Build.Handler(
+            new StubDecoder(3000, 4000), new StubDetector([labelled, small]), reader, ocrRetryScans: TwoScans);
+
+        await handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, ["68410975", "68582213"]), None);
+
+        Assert.Equal([0, 320], reader.Scans);
+    }
+
+    [Fact]
     public async Task ReadStatus_LabelFallbackUnknownAndNotVisible()
     {
         CartonBox corrected = Build.Carton(300, 600);
@@ -136,7 +267,7 @@ public class CollectSkuHandlerTests
         };
         StubReader reader = new(texts);
         CollectSkuHandler handler = Build.Handler(
-            new StubDecoder(3000, 4000), new StubDetector([corrected, fromBox, unknown, notVisible]), reader);
+            new StubDecoder(3000, 4000), new StubDetector([corrected, fromBox, unknown, notVisible]), reader, ocrFullCartonFallback: true);
 
         CollectSkuResponse result = await handler.HandleAsync(
             new CollectSkuCommand(Build.Jpeg, ["68410975", "68582213,68140913"]), None);
@@ -149,8 +280,9 @@ public class CollectSkuHandlerTests
         Assert.Null(byColumn[3].OcrText);
         Assert.Contains(CollectWarnings.UnknownSkuPresent, result.Warnings);
         Assert.Contains(CollectWarnings.LabelNotVisiblePresent, result.Warnings);
-        Assert.Equal(1, reader.Calls); // OCR sekali untuk semua kardus
-        Assert.Equal(4, reader.LastRegions.Count);
+        // tahap 1 sekali untuk semua area label, tahap 2 sekali untuk 3 kardus yang belum terbaca
+        Assert.Equal(2, reader.Calls);
+        Assert.Equal(3, reader.LastRegions.Count);
     }
 
     [Fact]

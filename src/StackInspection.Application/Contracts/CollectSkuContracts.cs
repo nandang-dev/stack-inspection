@@ -18,17 +18,32 @@ public sealed class BoundingBoxDto
     public int Y2 { get; init; }
 }
 
-/// <summary>Satu kardus di lapisan depan beserta posisi dan hasil baca SKU.</summary>
+/// <summary>
+/// Satu sel grid tampilan yang ditempati kardus lapisan depan. Kardus besar/lebar menempati beberapa sel dan
+/// muncul beberapa kali dengan isi dan <c>id</c> yang sama.
+/// </summary>
 public sealed class CellDto
 {
-    /// <summary>Baris foto, 0 = paling atas.</summary>
+    /// <summary>
+    /// ID kardus (0..N-1, urut dari kiri-atas). Entri dengan <c>id</c> sama = kardus yang sama.
+    /// Selalu diisi oleh Collect SKU; <c>null</c> hanya pada hasil versi lama (ditolak Analyze).
+    /// </summary>
+    public int? Id { get; init; }
+
+    /// <summary>Baris grid tampilan, 0 = paling atas.</summary>
     public int Row { get; init; }
 
-    /// <summary>Kolom, 0 = paling kiri. Satu kolom = satu stack.</summary>
+    /// <summary>Kolom grid tampilan, 0 = paling kiri.</summary>
     public int Column { get; init; }
 
-    /// <summary>Posisi dalam kolom, 0 = kardus paling bawah.</summary>
+    /// <summary>Level fisik di tumpukan: 0 = di lantai, selain itu 1 + level tertinggi kardus di <c>restsOn</c>.</summary>
     public int Level { get; init; }
+
+    /// <summary>
+    /// <c>id</c> kardus yang langsung ditumpu (kosong = di lantai; lebih dari satu = kardus menjembatani beberapa
+    /// tumpukan). <c>null</c> hanya pada hasil versi lama.
+    /// </summary>
+    public IReadOnlyList<int>? RestsOn { get; init; }
 
     /// <summary>Kode SKU 8 digit, atau <c>UNKNOWN</c> / <c>LABEL_NOT_VISIBLE</c>.</summary>
     public string Sku { get; init; } = string.Empty;
@@ -36,7 +51,10 @@ public sealed class CellDto
     /// <summary>Teks mentah hasil OCR; <c>null</c> jika label tidak terlihat.</summary>
     public string? OcrText { get; init; }
 
-    /// <summary>Keyakinan OCR 0–1.</summary>
+    /// <summary>
+    /// Keyakinan OCR 0–1 untuk teks label yang dipakai. Pada <c>InferredByAppearance</c> berisi kemiripan tampilan
+    /// (cosine 0–1) ke kardus acuan terbaik, karena SKU-nya tidak dibaca dari label.
+    /// </summary>
     public double OcrConfidence { get; init; }
 
     /// <summary>Keyakinan deteksi kardus 0–1.</summary>
@@ -52,14 +70,23 @@ public sealed class CellDto
     public BoundingBoxDto BoundingBox { get; init; } = new();
 }
 
-/// <summary>Ringkasan satu kolom tumpukan.</summary>
+/// <summary>
+/// Satu jalur tumpukan dari kardus di lantai sampai kardus teratas, mengikuti <c>restsOn</c>. Kardus yang
+/// menjembatani beberapa tumpukan muncul di setiap jalur yang melewatinya.
+/// </summary>
 public sealed class StackDto
 {
-    /// <summary>Indeks kolom.</summary>
+    /// <summary>Nomor jalur (0..), urut dari kiri.</summary>
+    public int Path { get; init; }
+
+    /// <summary>Kolom grid tampilan kardus paling bawah di jalur ini.</summary>
     public int Column { get; init; }
 
-    /// <summary>Jumlah kardus di kolom.</summary>
+    /// <summary>Jumlah kardus di jalur.</summary>
     public int Height { get; init; }
+
+    /// <summary><c>id</c> kardus dari paling bawah ke paling atas.</summary>
+    public IReadOnlyList<int> CartonIdsBottomToTop { get; init; } = [];
 
     /// <summary>SKU dari kardus paling bawah ke paling atas.</summary>
     public IReadOnlyList<string> SkusBottomToTop { get; init; } = [];
@@ -99,10 +126,13 @@ public sealed class CollectSkuResponse
     /// <summary>Jumlah kotak yang dibuang karena dianggap lapisan belakang.</summary>
     public int ExcludedBackLayerCount { get; init; }
 
-    /// <summary>Semua kardus lapisan depan.</summary>
+    /// <summary>
+    /// Sel grid tampilan yang ditempati kardus lapisan depan, urut <c>row</c> lalu <c>column</c>. Jumlah kardus =
+    /// jumlah <c>id</c> unik, bukan jumlah entri.
+    /// </summary>
     public IReadOnlyList<CellDto> Cells { get; init; } = [];
 
-    /// <summary>Ringkasan per kolom.</summary>
+    /// <summary>Jalur tumpukan bawah → atas (maks. 200; lebih dari itu muncul <c>STACK_PATHS_TRUNCATED</c>).</summary>
     public IReadOnlyList<StackDto> Stacks { get; init; } = [];
 
     /// <summary>Jumlah per SKU, urut <c>count</c> menurun lalu <c>sku</c> menaik.</summary>
@@ -111,12 +141,41 @@ public sealed class CollectSkuResponse
     /// <summary>
     /// Kode peringatan: <c>LOW_DETECTION_CONFIDENCE</c>, <c>UNKNOWN_SKU_PRESENT</c>,
     /// <c>LABEL_NOT_VISIBLE_PRESENT</c>, <c>IRREGULAR_GRID</c>, <c>BACK_LAYER_EXCLUDED</c>,
-    /// <c>SKU_CORRECTED_BY_MAJORITY</c>.
+    /// <c>SKU_CORRECTED_BY_MAJORITY</c>, <c>SKU_CORRECTED_BY_PARTIAL_READ</c>, <c>SKU_INFERRED_BY_APPEARANCE</c>,
+    /// <c>STACK_PATHS_TRUNCATED</c>.
     /// </summary>
     public IReadOnlyList<string> Warnings { get; init; } = [];
 
     /// <summary>Waktu proses (ms).</summary>
     public long ProcessingTimeMs { get; init; }
+
+    /// <summary>Rincian waktu proses per tahap (ms); jumlahnya ≈ <c>processingTimeMs</c>.</summary>
+    public CollectSkuTimingsDto Timings { get; init; } = new();
+}
+
+/// <summary>Waktu eksekusi tiap tahap pipeline Collect SKU (ms).</summary>
+public sealed class CollectSkuTimingsDto
+{
+    /// <summary>Validasi upload + decode gambar (termasuk orientasi EXIF).</summary>
+    public long DecodeMs { get; init; }
+
+    /// <summary>Photo gate: resolusi, fast-reject classifier, cek stempel kamera.</summary>
+    public long InspectMs { get; init; }
+
+    /// <summary>Deteksi kardus + filter kotak bersarang, gate hasil deteksi, dan filter lapisan depan.</summary>
+    public long DetectMs { get; init; }
+
+    /// <summary>
+    /// OCR area label semua kardus (+ tahap 2 seluruh kardus jika <c>Vision:OcrFullCartonFallback</c> aktif),
+    /// termasuk menunggu giliran jika OCR sedang dipakai request lain.
+    /// </summary>
+    public long OcrMs { get; init; }
+
+    /// <summary>Pencocokan SKU: fuzzy match, koreksi mayoritas, potongan nomor, dan inferensi tampilan.</summary>
+    public long SkuResolveMs { get; init; }
+
+    /// <summary>Penyusunan grid, stack, dan ringkasan response.</summary>
+    public long BuildMs { get; init; }
 }
 
 /// <summary>Kode peringatan Collect SKU.</summary>
@@ -150,4 +209,7 @@ public static class CollectWarnings
 
     /// <summary>Ada kardus yang SKU-nya diambil dari kardus lain yang tampilannya sangat mirip (status <c>InferredByAppearance</c>).</summary>
     public const string SkuInferredByAppearance = "SKU_INFERRED_BY_APPEARANCE";
+
+    /// <summary>Susunan sangat bercabang: <c>stacks</c> dipotong di batas jumlah jalur (penilaian Analyze tidak terpengaruh).</summary>
+    public const string StackPathsTruncated = "STACK_PATHS_TRUNCATED";
 }

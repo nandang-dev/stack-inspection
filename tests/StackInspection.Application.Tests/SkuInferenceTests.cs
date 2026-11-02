@@ -103,6 +103,55 @@ public sealed class SkuInferenceTests
     }
 
     [Fact]
+    public async Task Handler_ThreeDigitMisreadLookingLikeMajority_IsCorrected_ThenUnreadNeighbourIsInferred()
+    {
+        // tuning case 01: #59 terbaca 15690069 (beda 3 digit dari Sunlight 65590059) dan meracuni inferensi
+        // tampilan kardus di bawahnya (#71) karena dua SKU sama miripnya
+        List<CartonBox> cartons = [.. Enumerable.Range(0, 6).Select(c => Build.Carton(300 + (c * 410), 600))];
+        Dictionary<BoundingBox, (string?, string?)> texts = new()
+        {
+            [cartons[0].Box] = ("65590059", null),
+            [cartons[1].Box] = ("65590059", null),
+            [cartons[2].Box] = ("65590059", null),
+            [cartons[3].Box] = ("15690069", null),
+            [cartons[4].Box] = (null, null),
+            [cartons[5].Box] = ("64845107", null), // produk lain, tampilan berbeda: tidak tersentuh
+        };
+        StubEmbedder embedder = new(b => b == cartons[5].Box ? Angle(80) : Angle(0));
+        CollectSkuHandler handler = Build.Handler(
+            new StubDecoder(3000, 4000), new StubDetector(cartons), new StubReader(texts), embedder: embedder);
+
+        CollectSkuResponse result = await handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None);
+
+        CellDto[] cells = [.. result.Cells.OrderBy(c => c.BoundingBox.X1)];
+        Assert.Equal(("65590059", ReadStatus.Corrected, "15690069"), (cells[3].Sku, cells[3].ReadStatus, cells[3].OcrText));
+        Assert.Equal(("65590059", ReadStatus.InferredByAppearance), (cells[4].Sku, cells[4].ReadStatus));
+        Assert.Equal(1.0, cells[4].OcrConfidence, 3); // kemiripan tampilan
+        Assert.Equal(("64845107", ReadStatus.Matched), (cells[5].Sku, cells[5].ReadStatus));
+        Assert.Contains(CollectWarnings.SkuCorrectedByMajority, result.Warnings);
+    }
+
+    [Fact]
+    public async Task Handler_ThreeDigitMisread_NotLookingLikeMajority_IsKept()
+    {
+        List<CartonBox> cartons = [.. Enumerable.Range(0, 4).Select(c => Build.Carton(300 + (c * 410), 600))];
+        Dictionary<BoundingBox, (string?, string?)> texts = new()
+        {
+            [cartons[0].Box] = ("65590059", null),
+            [cartons[1].Box] = ("65590059", null),
+            [cartons[2].Box] = ("65590059", null),
+            [cartons[3].Box] = ("15690069", null),
+        };
+        StubEmbedder embedder = new(b => b == cartons[3].Box ? Angle(60) : Angle(0));
+        CollectSkuHandler handler = Build.Handler(
+            new StubDecoder(3000, 4000), new StubDetector(cartons), new StubReader(texts), embedder: embedder);
+
+        CollectSkuResponse result = await handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None);
+
+        Assert.Equal("15690069", result.Cells.MaxBy(c => c.BoundingBox.X1)!.Sku);
+    }
+
+    [Fact]
     public async Task Handler_DoesNotCallEmbedder_WhenEveryLabelIsRead()
     {
         List<CartonBox> cartons = [Build.Carton(300, 600), Build.Carton(710, 600)];

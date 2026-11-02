@@ -66,4 +66,67 @@ public class MajorityCorrectionTests
 
         Assert.Same(readings, MajorityCorrection.Apply(readings, variants, 0, 3, 1));
     }
+
+    [Fact]
+    public void TuningCase01_TwoDigitMisreadsAreCorrected_ThreeDigitsKept()
+    {
+        // container biru: 30× Sunlight + salah baca, 4× Pepsodent + 1 salah baca, 2 Molto salah baca berbeda
+        List<SkuReading> readings =
+        [
+            .. Enumerable.Repeat(Read("65590059"), 30),
+            Read("65590068"), // beda 2 digit
+            Read("55590068"), // beda 3 digit
+            Read("15690069"), // beda 3 digit
+            .. Enumerable.Repeat(Read("64845107"), 4),
+            Read("64845163"), // beda 2 digit
+            Read("64871158"),
+            Read("64371155"),
+        ];
+        List<IReadOnlyList<string>> variants = [.. readings.Select(r => (IReadOnlyList<string>)[r.OcrText!])];
+
+        IReadOnlyList<SkuReading> result = MajorityCorrection.Apply(readings, variants, 3, 3, 2);
+
+        Assert.Equal(("65590059", ReadStatus.Corrected), (result[30].Sku, result[30].Status));
+        Assert.Equal(["55590068", "15690069"], result.Skip(31).Take(2).Select(r => r.Sku));
+        Assert.Equal(("64845107", ReadStatus.Corrected), (result[^3].Sku, result[^3].Status));
+        Assert.Equal(["64871158", "64371155"], result.TakeLast(2).Select(r => r.Sku)); // tidak ada mayoritas Molto
+    }
+
+    [Fact]
+    public void TwoDigits_GenuineMinorityVariantIsAlsoCorrected_AcceptedRisk()
+    {
+        // risiko yang diterima (keputusan 2026-11-03): varian asli 65081663 di antara 3× 65081657 ikut dikoreksi
+        List<SkuReading> readings = [.. Enumerable.Repeat(Read("65081657"), 3), Read("65081663")];
+        List<IReadOnlyList<string>> variants = [.. readings.Select(r => (IReadOnlyList<string>)[r.OcrText!])];
+
+        Assert.Equal("65081657", MajorityCorrection.Apply(readings, variants, 3, 3, 2)[^1].Sku);
+    }
+
+    [Fact]
+    public void ClearlyReadMinority_IsKept_WeakReadIsCorrected()
+    {
+        // 65081663 terbaca jelas (99%) = varian asli → dipertahankan; 65081658 terbaca lemah (80%) → salah baca
+        List<SkuReading> readings =
+        [
+            .. Enumerable.Repeat(Read("65081657"), 3),
+            new("65081663", "65081663", 0.99, ReadStatus.Matched),
+            new("65081658", "65081658", 0.80, ReadStatus.Matched),
+        ];
+        List<IReadOnlyList<string>> variants = [.. readings.Select(r => (IReadOnlyList<string>)[r.OcrText!])];
+
+        IReadOnlyList<SkuReading> result = MajorityCorrection.Apply(readings, variants, 3, 3, 2, maxConfidence: 0.97);
+
+        Assert.Equal(("65081663", ReadStatus.Matched), (result[3].Sku, result[3].Status));
+        Assert.Equal(("65081657", ReadStatus.Corrected), (result[4].Sku, result[4].Status));
+    }
+
+    [Fact]
+    public void AllowFilter_LimitsTargets()
+    {
+        List<SkuReading> readings = [.. Enumerable.Repeat(Read("65590059"), 5), Read("15690069")];
+        List<IReadOnlyList<string>> variants = [.. readings.Select(r => (IReadOnlyList<string>)[r.OcrText!])];
+
+        Assert.Equal("15690069", MajorityCorrection.Apply(readings, variants, 3, 3, 3, allow: (_, _) => false)[^1].Sku);
+        Assert.Equal("65590059", MajorityCorrection.Apply(readings, variants, 3, 3, 3, allow: (_, _) => true)[^1].Sku);
+    }
 }

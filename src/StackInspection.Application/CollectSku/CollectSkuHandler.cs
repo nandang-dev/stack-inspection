@@ -19,9 +19,9 @@ public sealed record SkuReading(string Sku, string? OcrText, double Confidence, 
 
 /// <summary>
 /// Pipeline Collect SKU: validasi upload → decode → photo gate → deteksi → buang kotak bersarang →
-/// filter lapisan depan → OCR sekali untuk semua kardus → teks dicocokkan ke kardus berdasarkan posisi
-/// (area label dulu, fallback seluruh kardus) → fuzzy match → koreksi mayoritas → lengkapi potongan nomor →
-/// SKU dari kardus yang tampilannya mirip → grid.
+/// filter lapisan depan → OCR area label semua kardus (tahap 2 opsional: seluruh kardus yang belum terbaca) →
+/// teks dicocokkan ke kardus berdasarkan posisi (area label dulu, fallback seluruh kardus) → fuzzy match → koreksi mayoritas → lengkapi potongan nomor →
+/// SKU dari kardus yang tampilannya mirip → grid tampilan + relasi tumpuan (satu entri cell per sel grid).
 /// </summary>
 public sealed partial class CollectSkuHandler
 {
@@ -86,7 +86,6 @@ public sealed partial class CollectSkuHandler
         long inspectMs = stopwatch.ElapsedMilliseconds;
 
         IReadOnlyList<CartonBox> detected = await _detector.DetectAsync(image, model, cancellationToken).ConfigureAwait(false);
-        long detectMs = stopwatch.ElapsedMilliseconds;
         IReadOnlyList<CartonBox> distinct = ContainmentFilter.Apply(detected, _vision.ContainmentThreshold);
         string? failedGate = DetectionGate.Check(
             distinct, image.Width, image.Height, _photo.MinCartonCount, _photo.MinCartonCoverage);
@@ -107,10 +106,50 @@ public sealed partial class CollectSkuHandler
                 "Tidak ada kardus yang terdeteksi di lapisan depan foto.");
         }
 
+        long filterMs = stopwatch.ElapsedMilliseconds;
+        // OCR tahap 1: hanya area label setiap kardus (kiri-atas)
         IReadOnlyList<OcrText> texts = await _reader
-            .ReadAllAsync(image, [.. front.Kept.Select(c => c.Box)], cancellationToken)
+            .ReadAllAsync(
+                image,
+                [.. front.Kept.Select(c => LabelRegion(c.Box, _vision.LabelCropWidthRatio, _vision.LabelCropHeightRatio))],
+                0,
+                cancellationToken)
             .ConfigureAwait(false);
         IReadOnlyList<SkuReading> readings = [.. front.Kept.Select(c => ReadSku(c.Box, texts, candidates))];
+        foreach (OcrScanOptions scan in _vision.OcrRetryScans)
+        {
+            // OCR tahap 1b: kardus yang masih belum terbaca dibaca ulang dengan ukuran area/perbesaran scan ini
+            // (angka kecil, atau terpotong batas area). Kardus yang sudah terbaca tidak disentuh.
+            BoundingBox[] unread = [.. front.Kept
+                .Where((_, i) => readings[i].Status is not (ReadStatus.Matched or ReadStatus.Corrected))
+                .Select(c => LabelRegion(c.Box, scan.WidthRatio, scan.HeightRatio))];
+            if (unread.Length == 0)
+            {
+                break;
+            }
+
+            IReadOnlyList<OcrText> more = await _reader
+                .ReadAllAsync(image, unread, scan.MinAreaWidth, cancellationToken)
+                .ConfigureAwait(false);
+            texts = [.. texts, .. more];
+            readings = [.. front.Kept.Select(c => ReadSku(c.Box, texts, candidates))];
+        }
+
+        if (_vision.OcrFullCartonFallback)
+        {
+            // OCR tahap 2 (opsional): seluruh kardus, hanya untuk kardus yang belum terbaca dari area label
+            BoundingBox[] unread = [.. front.Kept
+                .Where((_, i) => readings[i].Status is not (ReadStatus.Matched or ReadStatus.Corrected))
+                .Select(c => c.Box)];
+            if (unread.Length > 0)
+            {
+                IReadOnlyList<OcrText> more = await _reader.ReadAllAsync(image, unread, 0, cancellationToken).ConfigureAwait(false);
+                texts = [.. texts, .. more];
+                readings = [.. front.Kept.Select(c => ReadSku(c.Box, texts, candidates))];
+            }
+        }
+
+        long ocrMs = stopwatch.ElapsedMilliseconds;
         bool majorityCorrected = false;
         if (candidates.Length == 0)
         {
@@ -120,7 +159,8 @@ public sealed partial class CollectSkuHandler
                 [.. front.Kept.Select(c => DigitVariants(c.Box, texts))],
                 _vision.MajorityMinCount,
                 _vision.MajorityDominance,
-                _vision.MajorityMaxDistance);
+                _vision.MajorityMaxDistance,
+                _vision.MajorityMaxConfidence);
             majorityCorrected = corrected.Where((r, i) => r != readings[i]).Any();
             readings = corrected;
         }
@@ -129,33 +169,84 @@ public sealed partial class CollectSkuHandler
             readings, [.. front.Kept.Select(c => PartialDigits(c.Box, texts))], candidates, _vision.PartialReadMinDigits);
         bool partialCorrected = completed.Where((r, i) => r != readings[i]).Any();
         readings = completed;
-        readings = await InferByAppearanceAsync(image, front.Kept, readings, cancellationToken).ConfigureAwait(false);
-        long ocrMs = stopwatch.ElapsedMilliseconds;
+        IReadOnlyList<float[]> embeddings = await EmbedAsync(image, front.Kept, readings, cancellationToken).ConfigureAwait(false);
+        if (candidates.Length == 0 && embeddings.Count == readings.Count && _vision.MajorityAppearanceMaxDistance > _vision.MajorityMaxDistance)
+        {
+            // Salah baca lebih dari MajorityMaxDistance digit tetap dikoreksi jika tampilannya mirip kardus mayoritas.
+            IReadOnlyList<SkuReading> current = readings;
+            IReadOnlyList<SkuReading> corrected = MajorityCorrection.Apply(
+                current,
+                [.. front.Kept.Select(c => DigitVariants(c.Box, texts))],
+                _vision.MajorityMinCount,
+                _vision.MajorityDominance,
+                _vision.MajorityAppearanceMaxDistance,
+                _vision.MajorityMaxConfidence,
+                (i, sku) => AppearanceInference.BestSimilarity(current, embeddings, i, sku) >= _vision.AppearanceMinSimilarity);
+            majorityCorrected |= corrected.Where((r, i) => r != current[i]).Any();
+            readings = corrected;
+        }
+
+        readings = InferByAppearance(readings, embeddings);
+        long resolveMs = stopwatch.ElapsedMilliseconds;
         LogTimings(
-            _logger, decodeMs, inspectMs - decodeMs, detectMs - inspectMs, ocrMs - detectMs, front.Kept.Count, texts.Count);
+            _logger,
+            decodeMs,
+            inspectMs - decodeMs,
+            filterMs - inspectMs,
+            ocrMs - filterMs,
+            resolveMs - ocrMs,
+            front.Kept.Count,
+            texts.Count);
 
         GridLayout layout = GridBuilder.Build([.. front.Kept.Select(c => c.Box)]);
+        // id kardus diurutkan dari kiri-atas agar mudah dibaca; restsOn ikut dipetakan ke id
+        int[] ids = new int[front.Kept.Count];
+        int nextId = 0;
+        foreach (int index in Enumerable.Range(0, front.Kept.Count)
+            .OrderBy(i => layout.Cartons[i].Cells[0].Row)
+            .ThenBy(i => layout.Cartons[i].Cells[0].Column))
+        {
+            ids[index] = nextId++;
+        }
+
         List<CellDto> cells = [];
         for (int i = 0; i < front.Kept.Count; i++)
         {
             CartonBox carton = front.Kept[i];
-            GridPosition position = layout.Positions[i];
+            CartonPlacement placement = layout.Cartons[i];
             SkuReading reading = readings[i];
-            cells.Add(new CellDto
+            int[] restsOn = [.. placement.RestsOn.Select(r => ids[r]).Order()];
+            foreach (GridCell grid in placement.Cells)
             {
-                Row = position.Row,
-                Column = position.Column,
-                Level = position.Level,
-                Sku = reading.Sku,
-                OcrText = reading.OcrText,
-                OcrConfidence = Math.Round(reading.Confidence, 4),
-                DetectionConfidence = Math.Round(carton.Confidence, 4),
-                ReadStatus = reading.Status,
-                BoundingBox = ToDto(carton.Box),
-            });
+                cells.Add(new CellDto
+                {
+                    Id = ids[i],
+                    Row = grid.Row,
+                    Column = grid.Column,
+                    Level = placement.Level,
+                    RestsOn = restsOn,
+                    Sku = reading.Sku,
+                    OcrText = reading.OcrText,
+                    OcrConfidence = Math.Round(reading.Confidence, 4),
+                    DetectionConfidence = Math.Round(carton.Confidence, 4),
+                    ReadStatus = reading.Status,
+                    BoundingBox = ToDto(carton.Box),
+                });
+            }
         }
 
-        cells = [.. cells.OrderBy(c => c.Row).ThenBy(c => c.Column)];
+        cells = [.. cells.OrderBy(c => c.Row).ThenBy(c => c.Column).ThenBy(c => c.Id)];
+        List<StackDto> stacks = [.. layout.Paths.BottomToTop.Select((path, p) => new StackDto
+        {
+            Path = p,
+            Column = layout.Cartons[path[0]].Cells.Min(c => c.Column),
+            Height = path.Count,
+            CartonIdsBottomToTop = [.. path.Select(i => ids[i])],
+            SkusBottomToTop = [.. path.Select(i => readings[i].Sku)],
+        })];
+        List<DistinctSkuDto> distinctSkus = BuildDistinct(cells);
+        List<string> warnings = BuildWarnings(front, layout, cells, majorityCorrected, partialCorrected);
+        long totalMs = stopwatch.ElapsedMilliseconds;
         return new CollectSkuResponse
         {
             InspectionId = Guid.NewGuid(),
@@ -166,10 +257,19 @@ public sealed partial class CollectSkuHandler
             ColumnCount = layout.ColumnCount,
             ExcludedBackLayerCount = front.ExcludedCount,
             Cells = cells,
-            Stacks = BuildStacks(cells),
-            DistinctSkus = BuildDistinct(cells),
-            Warnings = BuildWarnings(front, layout, cells, majorityCorrected, partialCorrected),
-            ProcessingTimeMs = stopwatch.ElapsedMilliseconds,
+            Stacks = stacks,
+            DistinctSkus = distinctSkus,
+            Warnings = warnings,
+            ProcessingTimeMs = totalMs,
+            Timings = new CollectSkuTimingsDto
+            {
+                DecodeMs = decodeMs,
+                InspectMs = inspectMs - decodeMs,
+                DetectMs = filterMs - inspectMs,
+                OcrMs = ocrMs - filterMs,
+                SkuResolveMs = resolveMs - ocrMs,
+                BuildMs = totalMs - resolveMs,
+            },
         };
     }
 
@@ -260,22 +360,32 @@ public sealed partial class CollectSkuHandler
             .Distinct(StringComparer.Ordinal)];
 
     /// <summary>
-    /// Kardus tanpa SKU terbaca diberi SKU kardus lain yang tampilannya sangat mirip (Vision:Appearance*).
-    /// Embedder hanya dipanggil jika aktif dan ada kardus terbaca maupun tidak terbaca.
+    /// Vektor tampilan semua kardus (Vision:AppearanceModel), dipakai koreksi mayoritas berdukungan tampilan dan
+    /// inferensi tampilan. Kosong jika embedder nonaktif, atau tidak ada kardus terbaca / yang perlu dibantu.
     /// </summary>
-    private async Task<IReadOnlyList<SkuReading>> InferByAppearanceAsync(
+    private async Task<IReadOnlyList<float[]>> EmbedAsync(
         VisionImage image, IReadOnlyList<CartonBox> cartons, IReadOnlyList<SkuReading> readings, CancellationToken cancellationToken)
     {
-        bool hasUnread = readings.Any(r => r.Status is ReadStatus.Unknown or ReadStatus.LabelNotVisible);
         bool hasRead = readings.Any(r => r.Status is ReadStatus.Matched or ReadStatus.Corrected);
-        if (string.IsNullOrWhiteSpace(_vision.AppearanceModel) || !hasUnread || !hasRead)
+        bool needsHelp = readings.Select(r => r.Sku).Distinct(StringComparer.Ordinal).Skip(1).Any()
+            || readings.Any(r => r.Status is ReadStatus.Unknown or ReadStatus.LabelNotVisible);
+        if (string.IsNullOrWhiteSpace(_vision.AppearanceModel) || !hasRead || !needsHelp)
+        {
+            return [];
+        }
+
+        return await _embedder.EmbedAsync(image, [.. cartons.Select(c => c.Box)], cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Kardus tanpa SKU terbaca diberi SKU kardus lain yang tampilannya sangat mirip (Vision:Appearance*).</summary>
+    private IReadOnlyList<SkuReading> InferByAppearance(IReadOnlyList<SkuReading> readings, IReadOnlyList<float[]> embeddings)
+    {
+        if (embeddings.Count != readings.Count
+            || !readings.Any(r => r.Status is ReadStatus.Unknown or ReadStatus.LabelNotVisible))
         {
             return readings;
         }
 
-        IReadOnlyList<float[]> embeddings = await _embedder
-            .EmbedAsync(image, [.. cartons.Select(c => c.Box)], cancellationToken)
-            .ConfigureAwait(false);
         IReadOnlyList<SkuReading> inferred = AppearanceInference.Apply(
             readings, embeddings, _vision.AppearanceMinSimilarity, _vision.AppearanceMinReferences, _vision.AppearanceMinMargin);
         LogAppearance(
@@ -370,19 +480,10 @@ public sealed partial class CollectSkuHandler
         Y2 = (int)Math.Round(box.Y2),
     };
 
-    private static List<StackDto> BuildStacks(List<CellDto> cells) =>
-        [.. cells
-            .GroupBy(c => c.Column)
-            .OrderBy(g => g.Key)
-            .Select(g => new StackDto
-            {
-                Column = g.Key,
-                Height = g.Count(),
-                SkusBottomToTop = [.. g.OrderBy(c => c.Level).Select(c => c.Sku)],
-            })];
-
+    /// <summary>Jumlah kardus (id unik, bukan jumlah sel) per SKU.</summary>
     private static List<DistinctSkuDto> BuildDistinct(List<CellDto> cells) =>
         [.. cells
+            .DistinctBy(c => c.Id)
             .GroupBy(c => c.Sku, StringComparer.Ordinal)
             .Select(g => new DistinctSkuDto { Sku = g.Key, Count = g.Count() })
             .OrderByDescending(d => d.Count)
@@ -412,6 +513,11 @@ public sealed partial class CollectSkuHandler
             warnings.Add(CollectWarnings.IrregularGrid);
         }
 
+        if (layout.Paths.Truncated)
+        {
+            warnings.Add(CollectWarnings.StackPathsTruncated);
+        }
+
         if (front.ExcludedCount > 0)
         {
             warnings.Add(CollectWarnings.BackLayerExcluded);
@@ -437,9 +543,9 @@ public sealed partial class CollectSkuHandler
 
     [LoggerMessage(
         Level = LogLevel.Information,
-        Message = "Collect SKU timing: decode {DecodeMs} ms, inspect {InspectMs} ms, detect {DetectMs} ms, ocr {OcrMs} ms ({Cartons} kardus, {Texts} teks)")]
+        Message = "Collect SKU timing: decode {DecodeMs} ms, inspect {InspectMs} ms, detect {DetectMs} ms, ocr {OcrMs} ms, sku {SkuResolveMs} ms ({Cartons} kardus, {Texts} teks)")]
     private static partial void LogTimings(
-        ILogger logger, long decodeMs, long inspectMs, long detectMs, long ocrMs, int cartons, int texts);
+        ILogger logger, long decodeMs, long inspectMs, long detectMs, long ocrMs, long skuResolveMs, int cartons, int texts);
 
     [LoggerMessage(
         Level = LogLevel.Information,

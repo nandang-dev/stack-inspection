@@ -4,13 +4,37 @@ API untuk menilai kualitas tumpukan kardus di truk/kontainer dari sebuah foto (b
 `../brief/BRIEF-stack-inspection-api-v2.md`).
 
 1. `POST /api/v1/stack-inspections/collect-sku` — cek kelayakan foto, deteksi kardus lapisan depan (YOLOX
-   ONNX dari Carton Trainer), baca SKU (PaddleOCR PP-OCRv5), susun baris/kolom.
+   ONNX dari Carton Trainer), baca SKU (PaddleOCR PP-OCRv5), susun grid tampilan + relasi tumpuan.
    Field opsional `model` memilih model deteksi (dropdown di Swagger); kosong = model default.
 2. `GET /api/v1/models` — daftar model deteksi yang tersedia (nama, input size, threshold, status, metrik).
 3. `POST /api/v1/stack-inspections/analyze` — hitung pelanggaran (`UNKNOWN_SKU`, `LABEL_NOT_VISIBLE`,
    `MAX_STACK_EXCEEDED`, `CLASS_POSITION_INVALID`) dan skor.
+4. `POST /api/v1/stack-inspections/preview` — Collect SKU + Analyze sekaligus, hasilnya **halaman HTML** simulasi
+   render susunan dus (grid seperti UI, posisi dus di foto + garis tumpuan, skor, pelanggaran, jalur tumpukan).
+   Form sama dengan Collect SKU ditambah `masterSkus` (JSON array, opsional; kosong = tanpa skor). Untuk QA/demo;
+   error tetap JSON (400/422).
 
 Swagger UI: `/swagger` (aktif jika `Swagger:Enabled = true`). Health check: `/health`.
+
+## Layout tumpukan (`cells`, `stacks`)
+
+Setiap kardus punya dua lapis informasi (rencana: `../brief/PLAN-stack-layout-engine.md`):
+
+| Lapis | Field | Untuk |
+|---|---|---|
+| Tampilan | `row`, `column` | Sel grid untuk menggambar ulang layout foto di UI |
+| Fisik | `id`, `restsOn`, `level` | Aturan bisnis: kardus ini menumpu di atas kardus mana |
+
+- `cells` berisi **satu entri per sel grid**. Kardus besar/lebar menempati beberapa sel dan muncul beberapa
+  kali dengan isi dan `id` yang sama; UI menggabungkan sel ber-id sama menjadi satu kotak.
+  Jumlah kardus = jumlah `id` unik, bukan `cells.length`.
+- `restsOn` = `id` kardus yang langsung ditumpu (kosong = di lantai; lebih dari satu = kardus menjembatani
+  beberapa tumpukan). `level` = 0 di lantai, selain itu 1 + level tertinggi kardus di `restsOn`.
+- `stacks` = jalur dari lantai sampai kardus teratas mengikuti `restsOn` (maks. 200, lebih dari itu muncul
+  warning `STACK_PATHS_TRUNCATED`). Kardus yang dipakai bersama muncul di setiap jalur yang melewatinya.
+- Analyze menilai per jalur: `maxStack` = jumlah kardus SKU sama di satu jalur; kelas dibandingkan dengan semua
+  kardus di bawahnya mengikuti `restsOn`. Pelanggaran menunjuk `cartonId`. `collectResult` versi lama (tanpa
+  `id`/`restsOn`) ditolak 400.
 
 ## Struktur
 
@@ -43,15 +67,23 @@ tidak di-commit) cukup untuk development. Vision asli diuji di Linux (Docker) da
 | `Vision:ModelsDirectory` | `models` (Docker: `/app/models`) | Folder model **di luar repo**, satu subfolder per model |
 | `Vision:DefaultModel` | `carton-v1` | Model jika request tidak memilih `model` |
 | `Vision:InputSize` / `ConfidenceThreshold` / `IouThreshold` | 960 / 0.5 / 0.5 | Default jika `model-card.json` tidak mencantumkannya |
-| `Vision:Threads` | 4 | Thread ONNX Runtime dan PaddleOCR (samakan dengan jumlah vCPU) |
+| `Vision:Threads` | 4 | Thread ONNX Runtime dan PaddleOCR (maksimal jumlah vCPU; sisakan untuk aplikasi lain di server yang sama) |
+| `Vision:MaxConcurrentInspections` | 1 | Collect SKU/Preview yang diproses bersamaan; selebihnya langsung 429 `SERVER_BUSY` (+ `Retry-After`) |
+| `Vision:OcrFullCartonFallback` | `false` | OCR tahap 2: kardus yang SKU-nya tidak terbaca dari area label di-OCR ulang seluruh kardusnya. `false` = hanya area label (jauh lebih cepat; label di luar area kiri-atas tidak terbaca) |
+| `Vision:OcrTileOverlap` | `320` | Tumpang tindih tile OCR (px) untuk area yang lebih besar dari satu halaman deteksi 960 px |
+| `Vision:OcrRetryScans` | 0,6×0,3 @320 px; 1,0×0,4 @480 px | OCR tahap 1b, baca ulang berbagai ukuran: setiap scan (`WidthRatio` × `HeightRatio` area label kiri-atas, diperbesar sampai minimal `MinAreaWidth` px) hanya untuk kardus yang masih belum terbaca. Kardus yang sudah terbaca tidak disentuh. Kosong = mati. Env: `Vision__OcrRetryScans__0__MinAreaWidth=400` |
+| `Vision:OcrMaxUpscale` | `3.0` | Batas perbesaran area label |
+| `Vision:OcrBoxScoreThreshold` | `0.5` | Skor minimal kotak teks hasil deteksi pada tahap 1b (tahap 1 tetap default PaddleOCR 0,7); lebih rendah = lebih sensitif |
 | `Vision:ContainmentThreshold` | 0.8 | Kotak yang ≥80% luasnya berada di dalam kotak lain dibuang sebagai duplikat (0 = nonaktif) |
-| `Vision:MajorityMinCount` / `MajorityDominance` / `MajorityMaxDistance` | 3 / 3 / 1 | Hanya jika `candidateSkus` kosong: hasil baca yang selisih ≤1 digit dari SKU yang muncul ≥3× dan ≥3× lebih sering dikoreksi ke SKU itu (`Corrected`, warning `SKU_CORRECTED_BY_MAJORITY`). `MajorityMinCount` 0 = nonaktif |
+| `Vision:MajorityMinCount` / `MajorityDominance` / `MajorityMaxDistance` | 3 / 3 / 2 | Hanya jika `candidateSkus` kosong: hasil baca yang selisih ≤2 digit dari SKU yang muncul ≥3× dan ≥3× lebih sering dikoreksi ke SKU itu (`Corrected`, warning `SKU_CORRECTED_BY_MAJORITY`). Risiko diterima: varian produk asli yang beda ≤2 digit dan kalah jumlah ikut dikoreksi. `MajorityMinCount` 0 = nonaktif |
+| `Vision:MajorityMaxConfidence` | 0.97 | Hasil baca langsung (`Matched`) dengan keyakinan OCR ≥ nilai ini tidak dikoreksi mayoritas (varian produk asli berlabel jelas dipertahankan). Kalibrasi dari persen keyakinan di Preview. 1 = semua boleh dikoreksi |
+| `Vision:MajorityAppearanceMaxDistance` | 3 | Salah baca sampai beda 3 digit tetap dikoreksi ke SKU mayoritas jika tampilan kardusnya mirip ≥ `AppearanceMinSimilarity` dengan kardus SKU mayoritas. 0 = nonaktif |
 | `Photo:MinLongSide` / `MinMegapixels` | 2048 / 2.0 | Gate resolusi: sisi terpanjang (px) **dan** jumlah piksel (MP) minimal. `MinMegapixels` 0 = tidak dicek |
 | `Photo:CameraOverlayEnabled` | false | Gate stempel kamera berbasis OCR. Default mati karena memakan ±100 detik per foto (OCR penuh di strip atas & bawah); akan digantikan classifier kelayakan foto |
 | `Photo:OverlayKeywords` | GPS Map Camera, Timemark, Lat, Long, Kode Foto | Kata kunci gate stempel kamera (hanya jika `CameraOverlayEnabled`) |
 | `Vision:PartialReadMinDigits` | 5 | Nomor SKU yang hanya terbaca sebagian (label terpotong/tertutup plastik, stiker, body kendaraan) dilengkapi dari SKU yang terbaca utuh di foto yang sama atau dari `candidateSkus`, jika potongannya ≥ 5 digit, berurutan, dan cocok ke tepat satu SKU (potongan ≥ 7 digit boleh beda 1 digit, mis. `1972453` → `64972453`). Status `Corrected`, warning `SKU_CORRECTED_BY_PARTIAL_READ`. 0 = nonaktif |
 | `Vision:AppearanceModel` | `carton-embed-v1` | Kardus yang labelnya tetap tidak terbaca diberi SKU kardus lain di foto yang sama yang tampilannya sangat mirip (embedder MobileNetV3 ImageNet, ±15 ms per 64 kardus). Status `InferredByAppearance`, warning `SKU_INFERRED_BY_APPEARANCE`. Kosong = nonaktif |
-| `Vision:AppearanceMinSimilarity` / `AppearanceMinReferences` / `AppearanceMinMargin` | 0.95 / 2 / 0.05 | Syarat inferensi tampilan: minimal 2 kardus terbaca ber-SKU sama dengan kemiripan ≥ 0.95, dan SKU lain kalah ≥ 0.05. Dikalibrasi baru dari 1 foto (4519909695): pada 0.90 kardus Lux di belakang plastik ikut diberi SKU teh (salah), pada 0.95 tidak ada yang salah tetapi hanya 5/9 kardus tanpa label yang terisi |
+| `Vision:AppearanceMinSimilarity` / `AppearanceMinReferences` / `AppearanceMinMargin` | 0.80 / 1 / 0.05 | Syarat inferensi tampilan: minimal 1 kardus terbaca dengan kemiripan ≥ 0.80, dan SKU lain kalah ≥ 0.05. Tuning case 01 (container biru): kardus SKU & desain sama 0.84–0.95, SKU lain ≤ 0.75 (pada 0.95 hampir tidak ada yang terisi). Risiko diketahui: foto 4519909695 punya kardus Lux di balik plastik yang mirip teh Sariwangi ±0.93 → akan diberi SKU teh (salah); naikkan nilai ini jika kasus seperti itu sering terjadi |
 | `Photo:ClassifierModel` / `ClassifierRejectThreshold` | `fast-reject-v3` / 0.7565 | Fast reject classifier (MobileNetV3, ±3 ms/foto) dijalankan setelah gate resolusi, sebelum deteksi: foto ditolak (`FAST_REJECTED`) jika p(tolak) ≥ ambang; di bawahnya (ragu) lolos. Model = subfolder di `Vision:ModelsDirectory` (model card `task` berisi "classifier", tidak muncul di daftar model deteksi). Skor setiap foto dicatat di log `Fast reject classifier ...`. Kosong = nonaktif. Validasi silang fast-reject-v3 di ambang 0.7565: 1/65 foto layak tertolak, 72% foto tidak layak tertangkap |
 | `Photo:MinCartonCount` / `MinCartonCoverage` | 5 / 0.08 | Fast reject sebelum OCR: foto ditolak (`FAST_REJECTED`) jika kardus terdeteksi < 5 atau total luas kotak kardus < 8% luas foto (bukan muatan, kontainer kosong, terlalu jauh). Gate yang menolak dicatat di log `Fast reject: gate ...`. 0 = nonaktif |
 | `FrontLayer:MinWidthRatio` / `MaxGapRatio` | 0.6 / 0.35 | Filter lapisan belakang |

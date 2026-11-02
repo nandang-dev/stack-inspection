@@ -40,11 +40,48 @@ public sealed class VisionOptions
     [Range(1, 64)]
     public int Threads { get; set; } = 4;
 
+    /// <summary>
+    /// Jumlah Collect SKU/Preview yang boleh diproses bersamaan. Request berikutnya langsung ditolak 429
+    /// <c>SERVER_BUSY</c> (tidak diantrekan) supaya RAM/CPU tidak habis oleh request yang menumpuk.
+    /// </summary>
+    [Range(1, 16)]
+    public int MaxConcurrentInspections { get; set; } = 1;
+
     [Range(0.1, 1.0)]
     public double LabelCropWidthRatio { get; set; } = 0.6;
 
     [Range(0.1, 1.0)]
     public double LabelCropHeightRatio { get; set; } = 0.3;
+
+    /// <summary>
+    /// OCR tahap 2: kardus yang SKU-nya tidak terbaca dari area label (tahap 1) di-OCR ulang seluruh kardusnya.
+    /// false (default) = hanya area label (<see cref="LabelCropWidthRatio"/> × <see cref="LabelCropHeightRatio"/>
+    /// kiri-atas), jauh lebih cepat tetapi label di luar area itu tidak terbaca.
+    /// </summary>
+    public bool OcrFullCartonFallback { get; set; }
+
+    /// <summary>Tumpang tindih tile OCR (px) untuk area yang lebih besar dari satu halaman deteksi 960 px.</summary>
+    [Range(0, 480)]
+    public int OcrTileOverlap { get; set; } = 320;
+
+    /// <summary>
+    /// OCR tahap 1b (baca ulang berbagai ukuran): setelah tahap 1 (resolusi asli), kardus yang belum terbaca dibaca
+    /// ulang dengan setiap scan berurutan; scan berikutnya hanya untuk kardus yang masih belum terbaca. Kardus yang
+    /// sudah terbaca tidak disentuh. Kosong = tahap 1b mati. Menambah halaman deteksi, bukan RAM.
+    /// Isi default ada di appsettings.json (tidak di sini, agar binder konfigurasi tidak menggandakan daftar).
+    /// </summary>
+    public List<OcrScanOptions> OcrRetryScans { get; set; } = [];
+
+    /// <summary>Batas perbesaran area OCR (lihat <see cref="OcrScanOptions.MinAreaWidth"/>).</summary>
+    [Range(1.0, 4.0)]
+    public double OcrMaxUpscale { get; set; } = 3.0;
+
+    /// <summary>
+    /// Skor minimal kotak teks hasil deteksi pada scan tahap 1b (tahap 1 memakai default PaddleOCR 0,7). Lebih rendah =
+    /// teks samar/kecil ikut terbaca; teks palsu tetap tersaring karena harus cocok dengan pola SKU/candidateSkus.
+    /// </summary>
+    [Range(0.1, 0.95)]
+    public double OcrBoxScoreThreshold { get; set; } = 0.5;
 
     [Range(0, 4)]
     public int FuzzyMaxDistance { get; set; } = 2;
@@ -60,9 +97,30 @@ public sealed class VisionOptions
     [Range(1, 100)]
     public int MajorityDominance { get; set; } = 3;
 
-    /// <summary>Selisih digit maksimal agar hasil baca dikoreksi ke SKU mayoritas.</summary>
+    /// <summary>
+    /// Selisih digit maksimal agar hasil baca dikoreksi ke SKU mayoritas. Tuning case 01: salah baca OCR umumnya
+    /// 1–2 digit (65590068 → 65590059, 64845163 → 64845107). Risiko yang diterima: varian produk asli yang beda
+    /// ≤ 2 digit dan kalah jumlah (65081663 di antara 3× 65081657) ikut dikoreksi ke mayoritas.
+    /// </summary>
     [Range(0, 4)]
-    public int MajorityMaxDistance { get; set; } = 1;
+    public int MajorityMaxDistance { get; set; } = 2;
+
+    /// <summary>
+    /// Hasil baca yang terbaca langsung (<c>Matched</c>) dengan keyakinan OCR ≥ nilai ini tidak dikoreksi mayoritas:
+    /// varian produk asli yang labelnya jelas (65081663 di antara 65081657) dipertahankan. 1 = semua boleh dikoreksi.
+    /// Kalibrasi dari nilai keyakinan yang ditampilkan di Preview.
+    /// </summary>
+    [Range(0.0, 1.0)]
+    public double MajorityMaxConfidence { get; set; } = 0.97;
+
+    /// <summary>
+    /// Koreksi mayoritas dengan dukungan tampilan: selisih digit sampai nilai ini (di atas
+    /// <see cref="MajorityMaxDistance"/>) tetap dikoreksi jika tampilan kardus mirip ≥
+    /// <see cref="AppearanceMinSimilarity"/> dengan kardus SKU mayoritas (mis. 15690069 → 65590059, beda 3 digit).
+    /// Butuh <see cref="AppearanceModel"/>. 0 = nonaktif.
+    /// </summary>
+    [Range(0, 4)]
+    public int MajorityAppearanceMaxDistance { get; set; } = 3;
 
     /// <summary>
     /// Potongan nomor SKU (label terpotong/tertutup) minimal sekian digit dilengkapi dari SKU yang terbaca utuh
@@ -77,13 +135,16 @@ public sealed class VisionOptions
     /// </summary>
     public string AppearanceModel { get; set; } = string.Empty;
 
-    /// <summary>Kemiripan tampilan (cosine) minimal ke kardus acuan.</summary>
+    /// <summary>
+    /// Kemiripan tampilan (cosine) minimal ke kardus acuan. Tuning case 01: kardus SKU &amp; desain sama 0,84–0,95,
+    /// SKU lain ≤ 0,75.
+    /// </summary>
     [Range(0.5, 1.0)]
-    public double AppearanceMinSimilarity { get; set; } = 0.95;
+    public double AppearanceMinSimilarity { get; set; } = 0.80;
 
     /// <summary>Jumlah kardus acuan ber-SKU sama yang harus lolos <see cref="AppearanceMinSimilarity"/>.</summary>
     [Range(1, 10)]
-    public int AppearanceMinReferences { get; set; } = 2;
+    public int AppearanceMinReferences { get; set; } = 1;
 
     /// <summary>Selisih kemiripan minimal antara SKU terbaik dan SKU lain.</summary>
     [Range(0.0, 0.5)]
@@ -98,6 +159,25 @@ public sealed class VisionOptions
     /// </summary>
     [Range(0.0, 1.0)]
     public double ContainmentThreshold { get; set; } = 0.8;
+}
+
+/// <summary>Satu scan baca ulang OCR (lihat <see cref="VisionOptions.OcrRetryScans"/>).</summary>
+public sealed class OcrScanOptions
+{
+    /// <summary>Lebar area label (× lebar kardus) dari kiri-atas kardus.</summary>
+    [Range(0.1, 1.0)]
+    public double WidthRatio { get; set; } = 0.6;
+
+    /// <summary>Tinggi area label (× tinggi kardus) dari atas kardus.</summary>
+    [Range(0.1, 1.0)]
+    public double HeightRatio { get; set; } = 0.3;
+
+    /// <summary>
+    /// Area (+ margin) yang lebih sempit dari ini (px) diperbesar sampai selebar ini, maksimal
+    /// <see cref="VisionOptions.OcrMaxUpscale"/> kali. Angka label dus kecil di foto ±2000 px hanya ±8–13 px.
+    /// </summary>
+    [Range(0, 960)]
+    public int MinAreaWidth { get; set; } = 320;
 }
 
 /// <summary>Pemeriksaan kelayakan foto (section <c>Photo</c>).</summary>

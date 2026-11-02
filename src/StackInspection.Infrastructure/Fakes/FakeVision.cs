@@ -91,7 +91,8 @@ public sealed class FakeCartonDetector(FakeVisionFixtureProvider provider) : ICa
 /// </summary>
 public sealed class FakeSkuLabelReader(FakeVisionFixtureProvider provider) : ISkuLabelReader
 {
-    public Task<IReadOnlyList<OcrText>> ReadAllAsync(VisionImage image, IReadOnlyList<BoundingBox> regions, CancellationToken cancellationToken)
+    public Task<IReadOnlyList<OcrText>> ReadAllAsync(
+        VisionImage image, IReadOnlyList<BoundingBox> regions, int minAreaWidth, CancellationToken cancellationToken)
     {
         List<OcrText> texts = [];
         foreach (FakeCarton carton in provider.Fixture.Cartons)
@@ -108,7 +109,9 @@ public sealed class FakeSkuLabelReader(FakeVisionFixtureProvider provider) : ISk
             }
         }
 
-        return Task.FromResult<IReadOnlyList<OcrText>>(texts);
+        // seperti OCR asli: hanya teks yang titik tengahnya di dalam area yang diminta
+        return Task.FromResult<IReadOnlyList<OcrText>>([.. texts.Where(t => t.Box is BoundingBox b && regions.Any(r =>
+            b.CenterX >= r.X1 && b.CenterX <= r.X2 && b.CenterY >= r.Y1 && b.CenterY <= r.Y2))]);
     }
 
     private static BoundingBox Part(BoundingBox box, double x1, double y1, double x2, double y2) =>

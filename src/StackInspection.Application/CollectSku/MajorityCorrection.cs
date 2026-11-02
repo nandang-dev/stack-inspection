@@ -15,12 +15,19 @@ public static class MajorityCorrection
     /// <param name="minCount">SKU dianggap mayoritas jika terbaca minimal sekian kali (0 = nonaktif).</param>
     /// <param name="dominance">SKU mayoritas harus muncul ≥ sekian kali lipat dari SKU yang dikoreksi.</param>
     /// <param name="maxDistance">Selisih digit (Levenshtein) maksimal agar dikoreksi.</param>
+    /// <param name="maxConfidence">
+    /// Hasil baca <see cref="ReadStatus.Matched"/> dengan keyakinan OCR ≥ nilai ini dipercaya dan tidak dikoreksi
+    /// (varian produk asli yang labelnya terbaca jelas). 1 = semua boleh dikoreksi.
+    /// </param>
+    /// <param name="allow">Syarat tambahan per (indeks kardus, SKU tujuan), mis. tampilan mirip; null = tanpa syarat.</param>
     public static IReadOnlyList<SkuReading> Apply(
         IReadOnlyList<SkuReading> readings,
         IReadOnlyList<IReadOnlyList<string>> digitVariants,
         int minCount,
         int dominance,
-        int maxDistance)
+        int maxDistance,
+        double maxConfidence = 1.0,
+        Func<int, string, bool>? allow = null)
     {
         ArgumentNullException.ThrowIfNull(readings);
         ArgumentNullException.ThrowIfNull(digitVariants);
@@ -43,7 +50,8 @@ public static class MajorityCorrection
         for (int i = 0; i < result.Length; i++)
         {
             SkuReading reading = result[i];
-            if (reading.Status == ReadStatus.LabelNotVisible)
+            if (reading.Status == ReadStatus.LabelNotVisible
+                || (reading.Status == ReadStatus.Matched && reading.Confidence >= maxConfidence))
             {
                 continue;
             }
@@ -58,7 +66,7 @@ public static class MajorityCorrection
                 }
 
                 int distance = digitVariants[i].Count == 0 ? int.MaxValue : digitVariants[i].Min(v => SkuMatcher.Levenshtein(v, sku));
-                if (distance <= maxDistance)
+                if (distance <= maxDistance && (allow is null || allow(i, sku)))
                 {
                     targets.Add((sku, distance));
                 }
