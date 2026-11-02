@@ -87,6 +87,68 @@ public sealed class StackInspectionsApiTests : IClassFixture<StackInspectionsApi
     }
 
     [Fact]
+    public async Task Preview_WithMasterSkus_ReturnsHtmlWithScoreAndViolations()
+    {
+        using HttpClient client = _factory.CreateClient();
+        using MultipartFormDataContent form = Upload(Jpeg, "68410975", "68582213", "68140913");
+        form.Add(new StringContent(JsonSerializer.Serialize(Master, Json)), "masterSkus");
+
+        using HttpResponseMessage response = await client.PostAsync("/api/v1/stack-inspections/preview", form);
+        string html = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("text/html", response.Content.Headers.ContentType?.MediaType);
+        Assert.StartsWith("<!doctype html>", html, StringComparison.Ordinal);
+        Assert.Contains("41.67%", html, StringComparison.Ordinal);
+        Assert.Contains("MAX_STACK_EXCEEDED", html, StringComparison.Ordinal);
+        Assert.Equal(48, html.Split("class=\"tile").Length - 1); // 48 dus, satu kotak per id
+        Assert.Contains("SariWangi Teh Asli", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Preview_WithoutMasterSkus_ReturnsLayoutOnly()
+    {
+        using HttpClient client = _factory.CreateClient();
+
+        using HttpResponseMessage response = await client.PostAsync("/api/v1/stack-inspections/preview", Upload(Jpeg));
+        string html = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("masterSkus tidak diisi", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("Pelanggaran</h2>", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Preview_InvalidMasterSkusJson_Returns400()
+    {
+        using HttpClient client = _factory.CreateClient();
+        using MultipartFormDataContent form = Upload(Jpeg);
+        form.Add(new StringContent("bukan json"), "masterSkus");
+
+        using HttpResponseMessage response = await client.PostAsync("/api/v1/stack-inspections/preview", form);
+        JsonNode? body = JsonNode.Parse(await response.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.NotNull(body?["errors"]?["masterSkus"]);
+    }
+
+    [Fact]
+    public async Task Preview_LowResolution_Returns422Json()
+    {
+        string fixture = Path.Combine(Path.GetTempPath(), $"lowres-{Guid.NewGuid():N}.json");
+        await File.WriteAllTextAsync(fixture, """{"imageWidth":1600,"imageHeight":1200,"overlayTexts":[],"cartons":[]}""");
+        using FakeVisionFactory lowRes = new() { FixturePath = fixture };
+        using HttpClient client = lowRes.CreateClient();
+
+        using HttpResponseMessage response = await client.PostAsync("/api/v1/stack-inspections/preview", Upload(Jpeg));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        JsonNode? problem = JsonNode.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("PHOTO_NOT_INSPECTABLE", problem?["code"]?.GetValue<string>());
+        File.Delete(fixture);
+    }
+
+    [Fact]
     public async Task Collect_JsonUsesCamelCaseAndStringEnums()
     {
         using HttpClient client = _factory.CreateClient();
