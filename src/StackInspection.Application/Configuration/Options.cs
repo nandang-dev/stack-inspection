@@ -97,9 +97,13 @@ public sealed class VisionOptions
     [Range(1, 100)]
     public int MajorityDominance { get; set; } = 3;
 
-    /// <summary>Selisih digit maksimal agar hasil baca dikoreksi ke SKU mayoritas.</summary>
+    /// <summary>
+    /// Selisih digit maksimal agar hasil baca dikoreksi ke SKU mayoritas. Tuning case 01: salah baca OCR umumnya
+    /// 1–2 digit (65590068 → 65590059, 64845163 → 64845107). Risiko yang diterima: varian produk asli yang beda
+    /// ≤ 2 digit dan kalah jumlah (65081663 di antara 3× 65081657) ikut dikoreksi ke mayoritas.
+    /// </summary>
     [Range(0, 4)]
-    public int MajorityMaxDistance { get; set; } = 1;
+    public int MajorityMaxDistance { get; set; } = 2;
 
     /// <summary>
     /// Potongan nomor SKU (label terpotong/tertutup) minimal sekian digit dilengkapi dari SKU yang terbaca utuh
