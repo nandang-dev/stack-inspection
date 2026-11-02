@@ -9,7 +9,7 @@ public sealed class MasterSkuDto
     /// <summary>Nama produk.</summary>
     public string Name { get; init; } = string.Empty;
 
-    /// <summary>Jumlah maksimal kardus SKU yang sama dalam satu kolom (harus &gt; 0).</summary>
+    /// <summary>Jumlah maksimal kardus SKU yang sama dalam satu jalur tumpukan (harus &gt; 0).</summary>
     public int MaxStack { get; init; }
 
     /// <summary>Berat per kardus (kg), informatif.</summary>
@@ -22,7 +22,10 @@ public sealed class MasterSkuDto
 /// <summary>Request endpoint Analyze.</summary>
 public sealed class AnalyzeStackRequest
 {
-    /// <summary>Body response Collect SKU apa adanya. Hanya <c>cells</c> dan <c>inspectionId</c> yang dipakai.</summary>
+    /// <summary>
+    /// Body response Collect SKU apa adanya. Hanya <c>cells</c> dan <c>inspectionId</c> yang dipakai; hasil versi
+    /// lama (cell tanpa <c>id</c>/<c>restsOn</c>) ditolak 400.
+    /// </summary>
     public CollectSkuResponse? CollectResult { get; init; }
 
     /// <summary>Data master SKU.</summary>
@@ -37,13 +40,16 @@ public sealed class ViolationDto
     /// </summary>
     public string Type { get; init; } = string.Empty;
 
-    /// <summary>Baris kardus.</summary>
+    /// <summary><c>id</c> kardus yang melanggar (sorot semua sel <c>cells</c> dengan id ini).</summary>
+    public int CartonId { get; init; }
+
+    /// <summary>Baris grid tampilan (sel kiri-atas kardus).</summary>
     public int Row { get; init; }
 
-    /// <summary>Kolom kardus.</summary>
+    /// <summary>Kolom grid tampilan (sel kiri-atas kardus).</summary>
     public int Column { get; init; }
 
-    /// <summary>Level kardus dalam kolom.</summary>
+    /// <summary>Level fisik kardus di tumpukan.</summary>
     public int Level { get; init; }
 
     /// <summary>SKU kardus.</summary>
@@ -72,16 +78,22 @@ public sealed class SkuSummaryDto
     public int ViolationCount { get; init; }
 }
 
-/// <summary>Ringkasan per kolom.</summary>
+/// <summary>Ringkasan satu jalur tumpukan (bawah → atas mengikuti <c>restsOn</c>).</summary>
 public sealed class StackSummaryDto
 {
-    /// <summary>Indeks kolom.</summary>
+    /// <summary>Nomor jalur (0..), urut dari kiri.</summary>
+    public int Path { get; init; }
+
+    /// <summary>Kolom grid tampilan kardus paling bawah di jalur ini.</summary>
     public int Column { get; init; }
 
-    /// <summary>Jumlah kardus di kolom.</summary>
+    /// <summary>Jumlah kardus di jalur.</summary>
     public int Height { get; init; }
 
-    /// <summary>Jumlah kardus yang melanggar di kolom ini.</summary>
+    /// <summary><c>id</c> kardus dari paling bawah ke paling atas.</summary>
+    public IReadOnlyList<int> CartonIdsBottomToTop { get; init; } = [];
+
+    /// <summary>Jumlah kardus yang melanggar di jalur ini.</summary>
     public int ViolationCount { get; init; }
 }
 
@@ -91,10 +103,10 @@ public sealed class AnalyzeStackResponse
     /// <summary>ID inspeksi dari Collect SKU.</summary>
     public Guid InspectionId { get; init; }
 
-    /// <summary>Jumlah sel tanpa pelanggaran.</summary>
+    /// <summary>Jumlah kardus (id unik) tanpa pelanggaran.</summary>
     public int TotalScore { get; init; }
 
-    /// <summary>Jumlah total sel.</summary>
+    /// <summary>Jumlah kardus (id unik).</summary>
     public int MaxPossibleScore { get; init; }
 
     /// <summary><c>totalScore / maxPossibleScore × 100</c>, dibulatkan 2 desimal.</summary>
@@ -106,7 +118,7 @@ public sealed class AnalyzeStackResponse
     /// <summary>Ringkasan per SKU.</summary>
     public IReadOnlyList<SkuSummaryDto> SkuSummary { get; init; } = [];
 
-    /// <summary>Ringkasan per kolom.</summary>
+    /// <summary>Ringkasan per jalur tumpukan.</summary>
     public IReadOnlyList<StackSummaryDto> Stacks { get; init; } = [];
 }
 

@@ -114,7 +114,7 @@ public class ScoringTests
         // kolom: C (bawah), UNKNOWN, B, A (atas) → tidak ada pelanggaran kelas
         Dictionary<string, MasterSku> master = new(ReferenceGrid.Master);
         DetectedCell Make(int level, string sku, ReadStatus status) =>
-            new(3 - level, 0, level, sku, null, 0.9, 0.9, status, new BoundingBox(0, (3 - level) * 10, 10, ((3 - level) * 10) + 9));
+            new(3 - level, 0, level, sku, null, 0.9, 0.9, status, new BoundingBox(0, (3 - level) * 10, 10, ((3 - level) * 10) + 9), level, level == 0 ? [] : [level - 1]);
         List<DetectedCell> cells =
         [
             Make(0, ReferenceGrid.C, ReadStatus.Matched),

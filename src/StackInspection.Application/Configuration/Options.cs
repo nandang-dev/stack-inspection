@@ -64,6 +64,31 @@ public sealed class VisionOptions
     [Range(0, 4)]
     public int MajorityMaxDistance { get; set; } = 1;
 
+    /// <summary>
+    /// Potongan nomor SKU (label terpotong/tertutup) minimal sekian digit dilengkapi dari SKU yang terbaca utuh
+    /// di foto atau dari <c>candidateSkus</c>. 0 = nonaktif.
+    /// </summary>
+    [Range(0, 7)]
+    public int PartialReadMinDigits { get; set; } = 5;
+
+    /// <summary>
+    /// Nama subfolder model embedder tampilan kardus di <see cref="ModelsDirectory"/> (mis. <c>carton-embed-v1</c>).
+    /// Kardus yang labelnya tidak terbaca diberi SKU kardus lain yang sangat mirip. Kosong = nonaktif.
+    /// </summary>
+    public string AppearanceModel { get; set; } = string.Empty;
+
+    /// <summary>Kemiripan tampilan (cosine) minimal ke kardus acuan.</summary>
+    [Range(0.5, 1.0)]
+    public double AppearanceMinSimilarity { get; set; } = 0.95;
+
+    /// <summary>Jumlah kardus acuan ber-SKU sama yang harus lolos <see cref="AppearanceMinSimilarity"/>.</summary>
+    [Range(1, 10)]
+    public int AppearanceMinReferences { get; set; } = 2;
+
+    /// <summary>Selisih kemiripan minimal antara SKU terbaik dan SKU lain.</summary>
+    [Range(0.0, 0.5)]
+    public double AppearanceMinMargin { get; set; } = 0.05;
+
     [Range(0.0, 1.0)]
     public double LowConfidenceThreshold { get; set; } = 0.6;
 
@@ -88,6 +113,12 @@ public sealed class PhotoOptions
     [Range(0.0, 100.0)]
     public double MinMegapixels { get; set; } = 2.0;
 
+    /// <summary>
+    /// Gate stempel kamera berbasis OCR. Default mati: OCR penuh di strip atas/bawah memakan ±100 detik
+    /// per foto di CPU 4 vCPU. Akan digantikan classifier kelayakan foto.
+    /// </summary>
+    public bool CameraOverlayEnabled { get; set; }
+
     [Range(0.05, 0.5)]
     public double OverlayScanRatio { get; set; } = 0.25;
 
@@ -105,6 +136,24 @@ public sealed class PhotoOptions
 
     [Range(1, 10)]
     public int OverlayMinKeywordHits { get; set; } = 2;
+
+    /// <summary>
+    /// Fast reject: nama subfolder model classifier kelayakan foto di <c>Vision:ModelsDirectory</c>
+    /// (mis. <c>fast-reject-v3</c>). Kosong = gate classifier nonaktif.
+    /// </summary>
+    public string ClassifierModel { get; set; } = string.Empty;
+
+    /// <summary>Fast reject: foto ditolak jika p(tolak) classifier ≥ nilai ini. Di bawahnya (ragu) foto lolos.</summary>
+    [Range(0.5, 1.0)]
+    public double ClassifierRejectThreshold { get; set; } = 0.7565;
+
+    /// <summary>Fast reject: jumlah kardus terdeteksi minimal (setelah buang kotak bersarang). 0 = nonaktif.</summary>
+    [Range(0, 1000)]
+    public int MinCartonCount { get; set; } = 5;
+
+    /// <summary>Fast reject: total luas kotak kardus / luas foto minimal. 0 = nonaktif.</summary>
+    [Range(0.0, 1.0)]
+    public double MinCartonCoverage { get; set; } = 0.08;
 }
 
 /// <summary>Filter lapisan depan (section <c>FrontLayer</c>).</summary>
