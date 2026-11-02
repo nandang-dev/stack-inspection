@@ -40,18 +40,23 @@ public sealed partial class PaddleOcrTextReader : ISkuLabelReader, ITextSpotter,
     private readonly PaddleOcrAll _ocr;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly int _tileOverlap;
+    private readonly int _minAreaWidth;
+    private readonly double _maxUpscale;
     private readonly ILogger<PaddleOcrTextReader> _logger;
 
     public PaddleOcrTextReader(IOptions<VisionOptions> options, ILogger<PaddleOcrTextReader> logger)
     {
         ArgumentNullException.ThrowIfNull(options);
         _tileOverlap = options.Value.OcrTileOverlap;
+        _minAreaWidth = options.Value.OcrMinAreaWidth;
+        _maxUpscale = options.Value.OcrMaxUpscale;
         _logger = logger;
         _ocr = new PaddleOcrAll(LocalFullModels.ChineseV5, PaddleDevice.OneDnn(cpuMathThreadCount: options.Value.Threads))
         {
             AllowRotateDetection = false,
             Enable180Classification = false,
         };
+        _ocr.Detector.BoxScoreThreahold = (float)options.Value.OcrBoxScoreThreshold;
     }
 
     public async Task<IReadOnlyList<OcrText>> ReadAllAsync(
@@ -65,11 +70,13 @@ public sealed partial class PaddleOcrTextReader : ISkuLabelReader, ITextSpotter,
 
         OpenCvImage source = OpenCvImage.From(image);
         OcrRect[] areas = [.. regions.Select(r => Clamp(r, AreaMargin, source.Width, source.Height)).Where(r => r.Width > 0 && r.Height > 0)];
-        OcrPacking packing = OcrPacker.Pack(areas, TileSize, PieceGap, _tileOverlap);
+        OcrPacking packing = OcrPacker.Pack(areas, TileSize, PieceGap, _tileOverlap, _minAreaWidth, _maxUpscale);
         if (packing.PageCount == 0)
         {
             return [];
         }
+
+        int upscaled = areas.Count(a => OcrPacker.UpscaleOf(a.Width, _minAreaWidth, _maxUpscale) > 1);
 
         long waitStart = Stopwatch.GetTimestamp();
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -84,15 +91,16 @@ public sealed partial class PaddleOcrTextReader : ISkuLabelReader, ITextSpotter,
                 using Mat input = BuildPage(source.Mat, page);
                 foreach (RotatedRect rect in _ocr.Detector.Run(input))
                 {
-                    // kembalikan ke koordinat foto lewat potongan yang memuat titik tengahnya
+                    // kembalikan ke koordinat foto lewat potongan yang memuat titik tengahnya (dibagi skala perbesaran)
                     OcrPiece? piece = page.FirstOrDefault(p =>
-                        rect.Center.X >= p.X && rect.Center.X < p.X + p.Source.Width
-                        && rect.Center.Y >= p.Y && rect.Center.Y < p.Y + p.Source.Height);
+                        rect.Center.X >= p.X && rect.Center.X < p.X + p.Width
+                        && rect.Center.Y >= p.Y && rect.Center.Y < p.Y + p.Height);
                     if (piece is not null)
                     {
+                        float scale = (float)piece.Scale;
                         found.Add(new RotatedRect(
-                            new Point2f(rect.Center.X - piece.X + piece.Source.X, rect.Center.Y - piece.Y + piece.Source.Y),
-                            rect.Size,
+                            new Point2f(((rect.Center.X - piece.X) / scale) + piece.Source.X, ((rect.Center.Y - piece.Y) / scale) + piece.Source.Y),
+                            new Size2f(rect.Size.Width / scale, rect.Size.Height / scale),
                             rect.Angle));
                     }
                 }
@@ -106,7 +114,7 @@ public sealed partial class PaddleOcrTextReader : ISkuLabelReader, ITextSpotter,
             IReadOnlyList<int> kept = OcrTiling.Deduplicate([.. inside.Select(t => t.Box)], DuplicateContainment);
             if (kept.Count == 0)
             {
-                LogOcr(_logger, regions.Count, packing.PageCount, (long)waited.TotalMilliseconds, (long)detectTime.TotalMilliseconds, 0, 0);
+                LogOcr(_logger, regions.Count, upscaled, packing.PageCount, (long)waited.TotalMilliseconds, (long)detectTime.TotalMilliseconds, 0, 0);
                 return [];
             }
 
@@ -129,6 +137,7 @@ public sealed partial class PaddleOcrTextReader : ISkuLabelReader, ITextSpotter,
                 LogOcr(
                     _logger,
                     regions.Count,
+                    upscaled,
                     packing.PageCount,
                     (long)waited.TotalMilliseconds,
                     (long)detectTime.TotalMilliseconds,
@@ -173,15 +182,27 @@ public sealed partial class PaddleOcrTextReader : ISkuLabelReader, ITextSpotter,
         }
     }
 
-    /// <summary>Halaman putih <see cref="TileSize"/> × <see cref="TileSize"/> berisi potongan-potongan foto (ukuran input detector selalu sama).</summary>
+    /// <summary>
+    /// Halaman putih <see cref="TileSize"/> × <see cref="TileSize"/> berisi potongan-potongan foto (ukuran input
+    /// detector selalu sama); potongan ber-<see cref="OcrPiece.Scale"/> &gt; 1 diperbesar (bicubic).
+    /// </summary>
     private static Mat BuildPage(Mat source, IEnumerable<OcrPiece> pieces)
     {
         Mat page = new(new Size(TileSize, TileSize), source.Type(), Scalar.All(255));
         foreach (OcrPiece piece in pieces)
         {
             using Mat from = new(source, new Rect(piece.Source.X, piece.Source.Y, piece.Source.Width, piece.Source.Height));
-            using Mat to = new(page, new Rect(piece.X, piece.Y, piece.Source.Width, piece.Source.Height));
-            from.CopyTo(to);
+            using Mat to = new(page, new Rect(piece.X, piece.Y, piece.Width, piece.Height));
+            if (piece.Width == piece.Source.Width && piece.Height == piece.Source.Height)
+            {
+                from.CopyTo(to);
+            }
+            else
+            {
+                using Mat resized = new();
+                Cv2.Resize(from, resized, new Size(piece.Width, piece.Height), 0, 0, InterpolationFlags.Cubic);
+                resized.CopyTo(to);
+            }
         }
 
         return page;
@@ -217,9 +238,9 @@ public sealed partial class PaddleOcrTextReader : ISkuLabelReader, ITextSpotter,
 
     [LoggerMessage(
         Level = Microsoft.Extensions.Logging.LogLevel.Information,
-        Message = "OCR label: {Regions} area → {Pages} halaman deteksi, antre {WaitMs} ms, deteksi {DetectMs} ms, pengenalan {RecognizeMs} ms, {Texts} teks")]
+        Message = "OCR label: {Regions} area ({Upscaled} diperbesar) → {Pages} halaman deteksi, antre {WaitMs} ms, deteksi {DetectMs} ms, pengenalan {RecognizeMs} ms, {Texts} teks")]
     private static partial void LogOcr(
-        ILogger logger, int regions, int pages, long waitMs, long detectMs, long recognizeMs, int texts);
+        ILogger logger, int regions, int upscaled, int pages, long waitMs, long detectMs, long recognizeMs, int texts);
 
     public void Dispose()
     {
