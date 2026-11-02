@@ -45,7 +45,10 @@ public readonly record struct BoundingBox(double X1, double Y1, double X2, doubl
 /// <summary>Kardus hasil deteksi.</summary>
 public sealed record CartonBox(BoundingBox Box, double Confidence);
 
-/// <summary>Satu kardus beserta posisinya di grid dan hasil baca SKU.</summary>
+/// <summary>
+/// Satu kardus beserta posisinya dan hasil baca SKU. <c>Row</c>/<c>Column</c> = sel grid tampilan kiri-atas;
+/// <c>Level</c>/<c>RestsOn</c> = posisi fisik (id kardus yang langsung ditumpu).
+/// </summary>
 public sealed record DetectedCell(
     int Row,
     int Column,
@@ -55,7 +58,9 @@ public sealed record DetectedCell(
     double OcrConfidence,
     double DetectionConfidence,
     ReadStatus ReadStatus,
-    BoundingBox Box);
+    BoundingBox Box,
+    int Id,
+    IReadOnlyList<int> RestsOn);
 
 /// <summary>Data master SKU yang dipakai aturan penilaian.</summary>
 public sealed record MasterSku(string Sku, string Name, int MaxStack, double Weight, SkuClass Class);

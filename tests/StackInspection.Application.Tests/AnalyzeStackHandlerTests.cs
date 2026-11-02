@@ -32,6 +32,7 @@ public class AnalyzeStackHandlerTests
             {
                 cells.Add(new CellDto
                 {
+                    Id = (r * 6) + c, RestsOn = r == rows.Length - 1 ? [] : [((r + 1) * 6) + c],
                     Row = r, Column = c, Level = 7 - r, Sku = sku[codes[c]], ReadStatus = ReadStatus.Matched,
                     BoundingBox = new BoundingBoxDto { X1 = c * 100, Y1 = r * 80, X2 = (c * 100) + 95, Y2 = (r * 80) + 75 },
                 });
@@ -73,6 +74,63 @@ public class AnalyzeStackHandlerTests
         Assert.Equal(20, result.TotalScore);
     }
 
+    [Fact]
+    public void ReferenceGrid_ViolationsPointToCartonIdAndStacksArePaths()
+    {
+        AnalyzeStackResponse result = Handler.Handle(new AnalyzeStackRequest { CollectResult = ReferenceCollect(), MasterSkus = Master });
+
+        ViolationDto maxStack = result.Violations.Single(v => v.Type == ViolationCodes.MaxStackExceeded);
+        Assert.Equal((0, 0, 0), (maxStack.CartonId, maxStack.Row, maxStack.Column));
+        Assert.Equal(6, result.Stacks.Count);
+        Assert.Equal([42, 36, 30, 24, 18, 12, 6, 0], result.Stacks[0].CartonIdsBottomToTop);
+        Assert.Equal([0, 1, 2, 3, 4, 5], result.Stacks.Select(s => s.Path));
+    }
+
+    [Fact]
+    public void CartonInSeveralCells_IsScoredOnce()
+    {
+        // id 0 = Bango (C) lebar di lantai menempati 2 sel; id 1 = SariWangi (A) di atasnya
+        CellDto Cell(int id, int row, int column, int level, string sku, params int[] restsOn) => new()
+        {
+            Id = id, Row = row, Column = column, Level = level, Sku = sku, RestsOn = restsOn, ReadStatus = ReadStatus.Matched,
+            BoundingBox = new BoundingBoxDto { X1 = column * 100, Y1 = row * 100, X2 = (column * 100) + 90, Y2 = (row * 100) + 90 },
+        };
+        CollectSkuResponse collect = new()
+        {
+            Cells = [Cell(1, 0, 0, 1, "68140913", 0), Cell(0, 1, 0, 0, "68582213"), Cell(0, 1, 1, 0, "68582213")],
+        };
+
+        AnalyzeStackResponse result = Handler.Handle(new AnalyzeStackRequest { CollectResult = collect, MasterSkus = Master });
+
+        Assert.Equal((2, 2), (result.TotalScore, result.MaxPossibleScore));
+        Assert.Equal([1, 1], result.SkuSummary.Select(s => s.Count));
+        Assert.Equal([0, 1], Assert.Single(result.Stacks).CartonIdsBottomToTop);
+    }
+
+    [Fact]
+    public void HeavyCartonOnLightBridgingCarton_IsViolation()
+    {
+        CellDto Cell(int id, int row, int column, int level, string sku, params int[] restsOn) => new()
+        {
+            Id = id, Row = row, Column = column, Level = level, Sku = sku, RestsOn = restsOn, ReadStatus = ReadStatus.Matched,
+            BoundingBox = new BoundingBoxDto { X1 = column * 100, Y1 = row * 100, X2 = (column * 100) + 90, Y2 = (row * 100) + 90 },
+        };
+        CollectSkuResponse collect = new()
+        {
+            Cells =
+            [
+                Cell(0, 0, 0, 1, "68140913", 2), Cell(1, 0, 1, 1, "68582213", 2),
+                Cell(2, 1, 0, 0, "68140913"), Cell(2, 1, 1, 0, "68140913"),
+            ],
+        };
+
+        AnalyzeStackResponse result = Handler.Handle(new AnalyzeStackRequest { CollectResult = collect, MasterSkus = Master });
+
+        ViolationDto violation = Assert.Single(result.Violations);
+        Assert.Equal((1, ViolationCodes.ClassPositionInvalid), (violation.CartonId, violation.Type));
+        Assert.Equal(2, result.Stacks.Count);
+    }
+
     public static TheoryData<string, AnalyzeStackRequest> InvalidRequests()
     {
         CollectSkuResponse collect = ReferenceCollect();
@@ -90,6 +148,40 @@ public class AnalyzeStackHandlerTests
                 new AnalyzeStackRequest { CollectResult = collect, MasterSkus = [new MasterSkuDto { Sku = "1", Name = "x", MaxStack = 3, Class = "D" }] }
             },
             { "collectResult.cells", new AnalyzeStackRequest { CollectResult = new CollectSkuResponse(), MasterSkus = Master } },
+            {
+                // hasil Collect SKU versi lama (tanpa id/restsOn)
+                "collectResult.cells",
+                new AnalyzeStackRequest
+                {
+                    CollectResult = new CollectSkuResponse { Cells = [new CellDto { Row = 0, Column = 0, Level = 0, Sku = "68140913" }] },
+                    MasterSkus = Master,
+                }
+            },
+            {
+                // restsOn merujuk kardus yang tidak ada
+                "collectResult.cells",
+                new AnalyzeStackRequest
+                {
+                    CollectResult = new CollectSkuResponse { Cells = [new CellDto { Id = 0, Level = 1, RestsOn = [9], Sku = "68140913" }] },
+                    MasterSkus = Master,
+                }
+            },
+            {
+                // sel dengan id sama berisi data berbeda
+                "collectResult.cells[1]",
+                new AnalyzeStackRequest
+                {
+                    CollectResult = new CollectSkuResponse
+                    {
+                        Cells =
+                        [
+                            new CellDto { Id = 0, Column = 0, RestsOn = [], Sku = "68140913" },
+                            new CellDto { Id = 0, Column = 1, RestsOn = [], Sku = "68582213" },
+                        ],
+                    },
+                    MasterSkus = Master,
+                }
+            },
             {
                 "collectResult.cells[48]",
                 new AnalyzeStackRequest

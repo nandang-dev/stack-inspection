@@ -32,8 +32,8 @@ public sealed class StackScoringService
             .ThenBy(v => v.Cell.Column)
             .ThenBy(v => v.Type)];
 
-        // Satu sel dengan beberapa pelanggaran tetap dikurangi satu kali.
-        int violatingCells = violations.Select(v => (v.Cell.Column, v.Cell.Level)).Distinct().Count();
+        // Satu kardus dengan beberapa pelanggaran tetap dikurangi satu kali.
+        int violatingCells = violations.Select(v => v.Cell.Id).Distinct().Count();
         int max = cells.Count;
         int total = max - violatingCells;
         double percentage = max == 0 ? 0 : Math.Round(total * 100.0 / max, 2, MidpointRounding.AwayFromZero);

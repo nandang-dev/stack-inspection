@@ -17,26 +17,33 @@ internal static class ExampleData
         ImageWidth = 1920,
         ImageHeight = 3413,
         RowCount = 8,
-        ColumnCount = 6,
+        ColumnCount = 7,
         ExcludedBackLayerCount = 12,
         Cells =
         [
+            // kardus id 0 lebar: menempati R0C0 dan R0C1 (dua entri, isi dan id sama)
             new CellDto
             {
-                Row = 0, Column = 0, Level = 7, Sku = "68140913", OcrText = "68140913", OcrConfidence = 0.98,
-                DetectionConfidence = 0.95, ReadStatus = ReadStatus.Matched,
-                BoundingBox = new BoundingBoxDto { X1 = 148, Y1 = 170, X2 = 418, Y2 = 356 },
+                Id = 0, Row = 0, Column = 0, Level = 7, RestsOn = [7], Sku = "68140913", OcrText = "68140913",
+                OcrConfidence = 0.98, DetectionConfidence = 0.95, ReadStatus = ReadStatus.Matched,
+                BoundingBox = new BoundingBoxDto { X1 = 148, Y1 = 170, X2 = 690, Y2 = 356 },
             },
             new CellDto
             {
-                Row = 0, Column = 1, Level = 3, Sku = "68582213", OcrText = "6858Z213", OcrConfidence = 0.91,
-                DetectionConfidence = 0.93, ReadStatus = ReadStatus.Corrected,
-                BoundingBox = new BoundingBoxDto { X1 = 422, Y1 = 168, X2 = 696, Y2 = 352 },
+                Id = 0, Row = 0, Column = 1, Level = 7, RestsOn = [7], Sku = "68140913", OcrText = "68140913",
+                OcrConfidence = 0.98, DetectionConfidence = 0.95, ReadStatus = ReadStatus.Matched,
+                BoundingBox = new BoundingBoxDto { X1 = 148, Y1 = 170, X2 = 690, Y2 = 356 },
             },
             new CellDto
             {
-                Row = 7, Column = 5, Level = 0, Sku = SkuCodes.LabelNotVisible, OcrText = null, OcrConfidence = 0,
-                DetectionConfidence = 0.9, ReadStatus = ReadStatus.LabelNotVisible,
+                Id = 1, Row = 0, Column = 2, Level = 3, RestsOn = [8, 9], Sku = "68582213", OcrText = "6858Z213",
+                OcrConfidence = 0.91, DetectionConfidence = 0.93, ReadStatus = ReadStatus.Corrected,
+                BoundingBox = new BoundingBoxDto { X1 = 700, Y1 = 168, X2 = 970, Y2 = 352 },
+            },
+            new CellDto
+            {
+                Id = 47, Row = 7, Column = 6, Level = 0, RestsOn = [], Sku = SkuCodes.LabelNotVisible, OcrText = null,
+                OcrConfidence = 0, DetectionConfidence = 0.9, ReadStatus = ReadStatus.LabelNotVisible,
                 BoundingBox = new BoundingBoxDto { X1 = 1545, Y1 = 1590, X2 = 1815, Y2 = 1776 },
             },
         ],
@@ -44,9 +51,11 @@ internal static class ExampleData
         [
             new StackDto
             {
+                Path = 0,
                 Column = 0,
-                Height = 8,
-                SkusBottomToTop = ["68140913", "68140913", "68140913", "68140913", "68140913", "68140913", "68140913", "68140913"],
+                Height = 7,
+                CartonIdsBottomToTop = [42, 35, 28, 21, 14, 7, 0],
+                SkusBottomToTop = ["68140913", "68140913", "68140913", "68140913", "68140913", "68140913", "68140913"],
             },
         ],
         DistinctSkus =
@@ -113,12 +122,12 @@ internal sealed class AnalyzeStackResponseExample : IExamplesProvider<AnalyzeSta
         [
             new ViolationDto
             {
-                Type = ViolationCodes.MaxStackExceeded, Row = 0, Column = 0, Level = 7, Sku = "68140913",
+                Type = ViolationCodes.MaxStackExceeded, CartonId = 0, Row = 0, Column = 0, Level = 7, Sku = "68140913",
                 Message = "SKU 68140913 melebihi max_stack (7) pada kolom 0",
             },
             new ViolationDto
             {
-                Type = ViolationCodes.ClassPositionInvalid, Row = 0, Column = 1, Level = 7, Sku = "68582213",
+                Type = ViolationCodes.ClassPositionInvalid, CartonId = 1, Row = 0, Column = 2, Level = 3, Sku = "68582213",
                 Message = "Produk 68582213 (C) berada di atas produk 68140913 (A) - kelas tidak sesuai",
             },
         ],
@@ -126,7 +135,7 @@ internal sealed class AnalyzeStackResponseExample : IExamplesProvider<AnalyzeSta
         [
             new SkuSummaryDto { Sku = "68140913", Name = "SariWangi Teh Asli 48 x TB30 x 1.85g", Class = "A", Count = 21, ViolationCount = 1 },
         ],
-        Stacks = [new StackSummaryDto { Column = 0, Height = 8, ViolationCount = 1 }],
+        Stacks = [new StackSummaryDto { Path = 0, Column = 0, Height = 8, CartonIdsBottomToTop = [42, 36, 30, 24, 18, 12, 6, 0], ViolationCount = 1 }],
     };
 }
 
