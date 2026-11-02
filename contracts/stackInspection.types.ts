@@ -3,7 +3,7 @@
  * src/StackInspection.Application/Contracts). Nama field camelCase, enum sebagai union string.
  */
 
-export type ReadStatus = 'Matched' | 'Corrected' | 'Unknown' | 'LabelNotVisible';
+export type ReadStatus = 'Matched' | 'Corrected' | 'Unknown' | 'LabelNotVisible' | 'InferredByAppearance';
 
 export type SkuClass = 'A' | 'B' | 'C';
 
@@ -20,12 +20,20 @@ export type CollectWarning =
   | 'IRREGULAR_GRID'
   | 'BACK_LAYER_EXCLUDED'
   /** Tanpa candidateSkus: ada hasil baca yang dikoreksi ke SKU mayoritas di foto (readStatus 'Corrected'). */
-  | 'SKU_CORRECTED_BY_MAJORITY';
+  | 'SKU_CORRECTED_BY_MAJORITY'
+  /** Nomor SKU terbaca sebagian (label terpotong) lalu dilengkapi dari SKU yang terbaca utuh di foto / candidateSkus. */
+  | 'SKU_CORRECTED_BY_PARTIAL_READ'
+  /** SKU diambil dari kardus lain yang tampilannya sangat mirip (readStatus 'InferredByAppearance'). */
+  | 'SKU_INFERRED_BY_APPEARANCE'
+  /** Susunan sangat bercabang: stacks dipotong di 200 jalur (penilaian Analyze tidak terpengaruh). */
+  | 'STACK_PATHS_TRUNCATED';
 
 export type PhotoRejectReason =
   | 'PHOTO_RESOLUTION_TOO_LOW'
   | 'CAMERA_OVERLAY_DETECTED'
-  | 'NO_CARTON_DETECTED';
+  | 'NO_CARTON_DETECTED'
+  /** Ditolak gate cepat (classifier / hasil deteksi) tanpa alasan spesifik. */
+  | 'FAST_REJECTED';
 
 /** Kode SKU khusus untuk sel yang tidak terbaca. */
 export type SpecialSku = 'UNKNOWN' | 'LABEL_NOT_VISIBLE';
@@ -37,13 +45,21 @@ export interface BoundingBoxDto {
   y2: number;
 }
 
+/**
+ * Satu sel grid tampilan yang ditempati kardus. Kardus besar/lebar menempati beberapa sel dan muncul
+ * beberapa kali dengan isi dan `id` yang sama → UI menggabungkan sel ber-id sama menjadi satu kotak.
+ */
 export interface CellDto {
-  /** Baris foto, 0 = paling atas. */
+  /** ID kardus (0..N-1, urut dari kiri-atas). Entri dengan id sama = kardus yang sama. */
+  id: number;
+  /** Baris grid tampilan, 0 = paling atas. */
   row: number;
-  /** Kolom, 0 = paling kiri. Satu kolom = satu stack. */
+  /** Kolom grid tampilan, 0 = paling kiri. */
   column: number;
-  /** Posisi dalam kolom, 0 = kardus paling bawah. */
+  /** Level fisik di tumpukan: 0 = di lantai, selain itu 1 + level tertinggi kardus di restsOn. */
   level: number;
+  /** id kardus yang langsung ditumpu (kosong = di lantai; > 1 = kardus menjembatani beberapa tumpukan). */
+  restsOn: number[];
   /** Kode SKU 8 digit, atau 'UNKNOWN' / 'LABEL_NOT_VISIBLE'. */
   sku: string;
   ocrText: string | null;
@@ -53,9 +69,14 @@ export interface CellDto {
   boundingBox: BoundingBoxDto;
 }
 
+/** Satu jalur tumpukan dari lantai sampai kardus teratas, mengikuti restsOn. */
 export interface StackDto {
+  /** Nomor jalur (0..), urut dari kiri. */
+  path: number;
+  /** Kolom grid tampilan kardus paling bawah di jalur ini. */
   column: number;
   height: number;
+  cartonIdsBottomToTop: number[];
   skusBottomToTop: string[];
 }
 
@@ -73,30 +94,54 @@ export interface CollectSkuResponse {
   rowCount: number;
   columnCount: number;
   excludedBackLayerCount: number;
+  /** Urut row lalu column. Jumlah kardus = jumlah id unik, bukan cells.length. */
   cells: CellDto[];
+  /** Jalur tumpukan (maks. 200). */
   stacks: StackDto[];
   /** Urut count menurun, lalu sku menaik. */
   distinctSkus: DistinctSkuDto[];
   warnings: CollectWarning[];
   processingTimeMs: number;
+  /** Rincian waktu proses per tahap (ms); jumlahnya ≈ processingTimeMs. */
+  timings: CollectSkuTimingsDto;
+}
+
+/** Waktu eksekusi tiap tahap pipeline Collect SKU (ms). */
+export interface CollectSkuTimingsDto {
+  /** Validasi upload + decode gambar. */
+  decodeMs: number;
+  /** Photo gate: resolusi, fast-reject classifier, cek stempel kamera. */
+  inspectMs: number;
+  /** Deteksi kardus + filter kotak bersarang, gate hasil deteksi, filter lapisan depan. */
+  detectMs: number;
+  /** OCR semua kardus (termasuk menunggu giliran OCR request lain). */
+  ocrMs: number;
+  /** Fuzzy match, koreksi mayoritas, potongan nomor, inferensi tampilan. */
+  skuResolveMs: number;
+  /** Penyusunan grid, stack, dan ringkasan response. */
+  buildMs: number;
 }
 
 export interface MasterSkuDto {
   sku: string;
   name: string;
-  /** Jumlah maksimal kardus SKU yang sama per kolom (> 0). */
+  /** Jumlah maksimal kardus SKU yang sama per jalur tumpukan (> 0). */
   maxStack: number;
   weight: number;
   class: SkuClass;
 }
 
 export interface AnalyzeStackRequest {
+  /** Response Collect SKU apa adanya; hasil versi lama (cells tanpa id/restsOn) ditolak 400. */
   collectResult: CollectSkuResponse;
   masterSkus: MasterSkuDto[];
 }
 
 export interface ViolationDto {
   type: ViolationType;
+  /** id kardus yang melanggar → sorot semua cells dengan id ini. */
+  cartonId: number;
+  /** Sel grid tampilan kiri-atas kardus. */
   row: number;
   column: number;
   level: number;
@@ -114,9 +159,13 @@ export interface SkuSummaryDto {
   violationCount: number;
 }
 
+/** Ringkasan satu jalur tumpukan (bawah → atas mengikuti restsOn). */
 export interface StackSummaryDto {
+  path: number;
+  /** Kolom grid tampilan kardus paling bawah di jalur ini. */
   column: number;
   height: number;
+  cartonIdsBottomToTop: number[];
   violationCount: number;
 }
 

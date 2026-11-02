@@ -50,6 +50,18 @@ public sealed class FileSystemModelCatalogTests : IDisposable
     }
 
     [Fact]
+    public void AuxiliaryModelFolders_AreNotListedAsDetectionModels()
+    {
+        AddModel("carton-v1", card: null);
+        AddModel("fast-reject-v3", """{"name":"fast-reject-v3","task":"fast-reject classifier (lolos / tolak)"}""");
+        AddModel("carton-embed-v1", """{"name":"carton-embed-v1","task":"carton appearance embedder"}""");
+
+        DetectionModel model = Assert.Single(Catalog().List());
+
+        Assert.Equal("carton-v1", model.Name);
+    }
+
+    [Fact]
     public void ModelWithoutCard_UsesDefaults_AndFolderWithoutOnnxIsIgnored()
     {
         AddModel("carton-v2", card: null);
