@@ -6,7 +6,12 @@ using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using StackInspection.Application.Abstractions;
+using StackInspection.Domain;
+using StackInspection.Infrastructure.Fakes;
 using StackInspection.Application.Contracts;
 
 namespace StackInspection.Api.Tests;
@@ -261,6 +266,39 @@ public sealed class StackInspectionsApiTests : IClassFixture<StackInspectionsApi
         Assert.Equal(["fake-model"], field?["enum"]?.AsArray().Select(n => n!.GetValue<string>()));
         Assert.Equal("fake-model", field?["default"]?.GetValue<string>());
         Assert.NotNull(doc?["paths"]?["/api/v1/models"]?["get"]?["responses"]?["200"]?["content"]?["application/json"]?["example"]);
+    }
+
+    [Fact]
+    public async Task Collect_WhileAnotherInspectionRuns_Returns429ServerBusy()
+    {
+        TaskCompletionSource started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        using WebApplicationFactory<Program> factory = _factory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
+            services.AddSingleton<ICartonDetector>(sp => new BlockingDetector(sp.GetRequiredService<FakeCartonDetector>(), started, release))));
+        using HttpClient client = factory.CreateClient();
+
+        Task<HttpResponseMessage> first = client.PostAsync("/api/v1/stack-inspections/collect-sku", Upload(Jpeg));
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        using HttpResponseMessage busy = await client.PostAsync("/api/v1/stack-inspections/preview", Upload(Jpeg));
+        release.SetResult();
+        using HttpResponseMessage done = await first;
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, busy.StatusCode);
+        Assert.Equal("30", busy.Headers.GetValues("Retry-After").Single());
+        JsonNode? problem = JsonNode.Parse(await busy.Content.ReadAsStringAsync());
+        Assert.Equal("SERVER_BUSY", problem?["code"]?.GetValue<string>());
+        Assert.Equal(HttpStatusCode.OK, done.StatusCode);
+    }
+
+    /// <summary>Detector yang menahan proses sampai dilepas, untuk mensimulasikan inspection yang sedang berjalan.</summary>
+    private sealed class BlockingDetector(ICartonDetector inner, TaskCompletionSource started, TaskCompletionSource release) : ICartonDetector
+    {
+        public async Task<IReadOnlyList<CartonBox>> DetectAsync(VisionImage image, DetectionModel model, CancellationToken cancellationToken)
+        {
+            started.TrySetResult();
+            await release.Task.WaitAsync(cancellationToken);
+            return await inner.DetectAsync(image, model, cancellationToken);
+        }
     }
 
     [Fact]

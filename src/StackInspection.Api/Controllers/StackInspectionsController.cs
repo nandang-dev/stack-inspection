@@ -1,7 +1,9 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Net.Http.Headers;
 using StackInspection.Api.Contracts;
+using StackInspection.Api.Errors;
 using StackInspection.Api.Rendering;
 using StackInspection.Api.Swagger;
 using StackInspection.Application.Analyze;
@@ -47,12 +49,15 @@ public sealed class StackInspectionsController : ControllerBase
     /// <response code="200">Hasil deteksi dan pembacaan SKU.</response>
     /// <response code="400">File kosong, format tidak didukung, terlalu besar, tidak bisa dibaca, atau model tidak dikenal.</response>
     /// <response code="422">Foto tidak layak dinilai (<c>PHOTO_NOT_INSPECTABLE</c>).</response>
+    /// <response code="429">Server sedang memproses foto lain (<c>SERVER_BUSY</c>, batas <c>Vision:MaxConcurrentInspections</c>); ulangi setelah header <c>Retry-After</c>.</response>
     [HttpPost("collect-sku")]
     [Consumes("multipart/form-data")]
     [RequestSizeLimit(100 * 1024 * 1024)]
+    [EnableRateLimiting(InspectionConcurrency.PolicyName)]
     [ProducesResponseType(typeof(CollectSkuResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status422UnprocessableEntity)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
     [SwaggerResponseExample(StatusCodes.Status200OK, typeof(CollectSkuResponseExample))]
     [SwaggerResponseExample(StatusCodes.Status422UnprocessableEntity, typeof(PhotoNotInspectableExample))]
     public async Task<ActionResult<CollectSkuResponse>> CollectSku(
@@ -116,13 +121,16 @@ public sealed class StackInspectionsController : ControllerBase
     /// </response>
     /// <response code="400">File kosong/format tidak didukung/terlalu besar, model tidak dikenal, atau masterSkus bukan JSON/tidak valid.</response>
     /// <response code="422">Foto tidak layak dinilai (<c>PHOTO_NOT_INSPECTABLE</c>).</response>
+    /// <response code="429">Server sedang memproses foto lain (<c>SERVER_BUSY</c>); ulangi setelah header <c>Retry-After</c>.</response>
     [HttpPost("preview")]
     [Consumes("multipart/form-data")]
     [Produces("text/html", "application/json")]
     [RequestSizeLimit(100 * 1024 * 1024)]
+    [EnableRateLimiting(InspectionConcurrency.PolicyName)]
     [ProducesResponseType(typeof(string), StatusCodes.Status200OK, "text/html")]
     [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest, "application/json")]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status422UnprocessableEntity, "application/json")]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests, "application/json")]
     [SwaggerResponseExample(StatusCodes.Status422UnprocessableEntity, typeof(PhotoNotInspectableExample))]
     public async Task<ContentResult> Preview([FromForm] StackPreviewRequest request, CancellationToken cancellationToken)
     {

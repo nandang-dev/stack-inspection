@@ -40,6 +40,13 @@ public sealed class VisionOptions
     [Range(1, 64)]
     public int Threads { get; set; } = 4;
 
+    /// <summary>
+    /// Jumlah Collect SKU/Preview yang boleh diproses bersamaan. Request berikutnya langsung ditolak 429
+    /// <c>SERVER_BUSY</c> (tidak diantrekan) supaya RAM/CPU tidak habis oleh request yang menumpuk.
+    /// </summary>
+    [Range(1, 16)]
+    public int MaxConcurrentInspections { get; set; } = 1;
+
     [Range(0.1, 1.0)]
     public double LabelCropWidthRatio { get; set; } = 0.6;
 

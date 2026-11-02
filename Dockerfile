@@ -21,9 +21,11 @@ RUN apt-get update \
 WORKDIR /app
 COPY --from=build /app .
 RUN mkdir -p /app/models && chown app:app /app/models
+# MALLOC_ARENA_MAX: glibc membuat arena malloc per thread native (oneDNN/ONNX) → RSS membengkak tanpa batas ini.
 ENV ASPNETCORE_URLS=http://+:8080 \
     ASPNETCORE_ENVIRONMENT=Production \
     DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+    MALLOC_ARENA_MAX=2 \
     Vision__ModelsDirectory=/app/models
 EXPOSE 8080
 VOLUME /app/models

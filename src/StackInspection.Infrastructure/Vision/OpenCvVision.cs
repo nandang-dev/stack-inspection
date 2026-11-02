@@ -99,6 +99,9 @@ public sealed class OnnxCartonDetector : ICartonDetector, IDisposable
         {
             IntraOpNumThreads = _options.Threads,
             GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
+            // tanpa arena/memory pattern: memori dikembalikan setelah inferensi, bukan ditahan sebesar puncak
+            EnableCpuMemArena = false,
+            EnableMemoryPattern = false,
         };
         return new InferenceSession(path, sessionOptions);
     }
