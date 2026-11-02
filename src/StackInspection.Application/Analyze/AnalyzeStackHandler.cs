@@ -20,7 +20,13 @@ public sealed class AnalyzeStackHandler
         (List<DetectedCell> cells, Dictionary<string, MasterSku> master) = Validate(request);
 
         StackScore score = _scoring.Score(cells, master);
-        HashSet<(int Column, int Level)> violating = [.. score.Violations.Select(v => (v.Cell.Column, v.Cell.Level))];
+        HashSet<int> violating = [.. score.Violations.Select(v => v.Cell.Id)];
+        // jalur dihitung ulang dari restsOn, bukan dari stacks client
+        Dictionary<int, int> indexOf = cells.Select((c, i) => (c.Id, i)).ToDictionary(x => x.Id, x => x.i);
+        StackPaths paths = SupportGraph.Paths(
+            [.. cells.Select(c => (IReadOnlyList<int>)[.. c.RestsOn.Select(id => indexOf[id])])],
+            i => cells[i].Box.CenterX,
+            GridBuilder.MaxPaths);
 
         return new AnalyzeStackResponse
         {
@@ -40,24 +46,26 @@ public sealed class AnalyzeStackHandler
                         Name = info?.Name,
                         Class = info?.Class.ToString(),
                         Count = g.Count(),
-                        ViolationCount = g.Count(c => violating.Contains((c.Column, c.Level))),
+                        ViolationCount = g.Count(c => violating.Contains(c.Id)),
                     };
                 })
                 .OrderByDescending(s => s.Count)
                 .ThenBy(s => s.Sku, StringComparer.Ordinal)],
-            Stacks = [.. cells
-                .GroupBy(c => c.Column)
-                .OrderBy(g => g.Key)
-                .Select(g => new StackSummaryDto
-                {
-                    Column = g.Key,
-                    Height = g.Count(),
-                    ViolationCount = g.Count(c => violating.Contains((c.Column, c.Level))),
-                })],
+            Stacks = [.. paths.BottomToTop.Select((path, p) => new StackSummaryDto
+            {
+                Path = p,
+                Column = cells[path[0]].Column,
+                Height = path.Count,
+                CartonIdsBottomToTop = [.. path.Select(i => cells[i].Id)],
+                ViolationCount = path.Count(i => violating.Contains(cells[i].Id)),
+            })],
         };
     }
 
-    /// <summary>Validasi request (400). Stack dibentuk ulang dari row/column/level, bukan dari <c>stacks</c> client.</summary>
+    /// <summary>
+    /// Validasi request (400). Satu <see cref="DetectedCell"/> per id kardus; row/column = sel kiri-atasnya.
+    /// Tumpukan dibentuk ulang dari <c>restsOn</c>, bukan dari <c>stacks</c> client.
+    /// </summary>
     public static (List<DetectedCell> Cells, Dictionary<string, MasterSku> Master) Validate(AnalyzeStackRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -112,20 +120,59 @@ public sealed class AnalyzeStackHandler
         {
             Add("collectResult.cells", "cells tidak boleh kosong.");
         }
+        else if (cellDtos.Any(c => c.Id is null || c.RestsOn is null))
+        {
+            Add(
+                "collectResult.cells",
+                "collectResult berasal dari Collect SKU versi lama (cell tanpa id/restsOn). Jalankan ulang Collect SKU.");
+        }
 
-        HashSet<(int, int)> positions = [];
+        if (errors.ContainsKey("collectResult.cells"))
+        {
+            throw new RequestValidationException(errors.ToDictionary(e => e.Key, e => e.Value.ToArray()));
+        }
+
         List<DetectedCell> cells = [];
+        // satu kardus bisa muncul di beberapa sel grid; semua entri dengan id sama harus berisi data yang sama
+        HashSet<(int, int, int)> positions = [];
+        Dictionary<int, (CellDto First, int Row, int Column)> cartons = [];
         for (int i = 0; i < cellDtos.Count; i++)
         {
             CellDto c = cellDtos[i];
-            if (!positions.Add((c.Column, c.Level)))
+            int id = c.Id!.Value;
+            if (!positions.Add((id, c.Row, c.Column)))
             {
-                Add($"collectResult.cells[{i}]", $"Posisi column {c.Column} level {c.Level} duplikat.");
+                Add($"collectResult.cells[{i}]", $"Sel id {id} row {c.Row} column {c.Column} duplikat.");
+                continue;
+            }
+
+            if (!cartons.TryGetValue(id, out (CellDto First, int Row, int Column) carton))
+            {
+                cartons[id] = (c, c.Row, c.Column);
+                continue;
+            }
+
+            if (!SameCarton(carton.First, c))
+            {
+                Add($"collectResult.cells[{i}]", $"Data kardus id {id} tidak sama di semua selnya.");
+            }
+
+            cartons[id] = (carton.First, Math.Min(carton.Row, c.Row), Math.Min(carton.Column, c.Column));
+        }
+
+        foreach ((int id, (CellDto c, int row, int column)) in cartons.OrderBy(x => x.Key))
+        {
+            foreach (int below in c.RestsOn!)
+            {
+                if (!cartons.TryGetValue(below, out (CellDto First, int Row, int Column) support) || support.First.Level >= c.Level)
+                {
+                    Add("collectResult.cells", $"restsOn kardus id {id} merujuk id {below} yang tidak ada atau tidak berada di bawahnya.");
+                }
             }
 
             BoundingBox box = new(c.BoundingBox.X1, c.BoundingBox.Y1, c.BoundingBox.X2, c.BoundingBox.Y2);
             cells.Add(new DetectedCell(
-                c.Row, c.Column, c.Level, c.Sku, c.OcrText, c.OcrConfidence, c.DetectionConfidence, c.ReadStatus, box));
+                row, column, c.Level, c.Sku, c.OcrText, c.OcrConfidence, c.DetectionConfidence, c.ReadStatus, box, id, [.. c.RestsOn!]));
         }
 
         if (errors.Count > 0)
@@ -145,10 +192,17 @@ public sealed class AnalyzeStackHandler
             ViolationType.MaxStackExceeded => ViolationCodes.MaxStackExceeded,
             _ => ViolationCodes.ClassPositionInvalid,
         },
+        CartonId = violation.Cell.Id,
         Row = violation.Cell.Row,
         Column = violation.Cell.Column,
         Level = violation.Cell.Level,
         Sku = violation.Cell.Sku,
         Message = violation.Message,
     };
+
+    private static bool SameCarton(CellDto a, CellDto b) =>
+        a.Level == b.Level
+        && string.Equals(a.Sku, b.Sku, StringComparison.Ordinal)
+        && a.ReadStatus == b.ReadStatus
+        && a.RestsOn!.Order().SequenceEqual(b.RestsOn!.Order());
 }

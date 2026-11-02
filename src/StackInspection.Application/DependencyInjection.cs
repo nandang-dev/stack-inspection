@@ -24,6 +24,7 @@ public static class DependencyInjection
 
         services.AddSingleton(StackScoringService.CreateDefault());
         services.AddSingleton<IPhotoInspectabilityCheck, ResolutionCheck>();
+        services.AddSingleton<IPhotoInspectabilityCheck, InspectabilityClassifierCheck>();
         services.AddSingleton<IPhotoInspectabilityCheck, CameraOverlayCheck>();
         services.AddSingleton<PhotoInspectabilityService>();
         services.AddScoped<CollectSkuHandler>();

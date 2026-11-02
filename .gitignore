@@ -9,7 +9,6 @@ TestResults/
 # Konfigurasi lokal (jangan di-commit)
 appsettings.Development.json
 appsettings.*.local.json
-.env
 
 # Model deteksi TIDAK di-commit; lokasinya dari Vision:ModelsDirectory (lihat README)
 models/
@@ -17,3 +16,5 @@ models/
 
 # OS
 .DS_Store
+config.bat
+node_modules

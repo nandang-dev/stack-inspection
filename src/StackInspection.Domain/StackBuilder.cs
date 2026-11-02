@@ -99,7 +99,7 @@ public static class StackBuilder
     }
 
     /// <summary><paramref name="box"/> berada di atas <paramref name="below"/> (tumpang tindih vertikal kecil masih boleh).</summary>
-    private static bool IsAbove(BoundingBox box, BoundingBox below) =>
+    internal static bool IsAbove(BoundingBox box, BoundingBox below) =>
         box.CenterY < below.CenterY
         && box.Y2 - below.Y1 <= MaxVerticalOverlapRatio * Math.Min(box.Height, below.Height);
 

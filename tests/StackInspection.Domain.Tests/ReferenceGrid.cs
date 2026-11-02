@@ -39,12 +39,16 @@ internal static class ReferenceGrid
                 string sku = codes[column] switch { "A" => A, "B" => B, _ => C };
                 int level = Rows.Length - 1 - row;
                 BoundingBox box = new(column * 100, row * 80, (column * 100) + 95, (row * 80) + 75);
-                cells.Add(new DetectedCell(row, column, level, sku, sku, 0.98, 0.95, ReadStatus.Matched, box));
+                int[] restsOn = row == Rows.Length - 1 ? [] : [Id(row + 1, column)];
+                cells.Add(new DetectedCell(row, column, level, sku, sku, 0.98, 0.95, ReadStatus.Matched, box, Id(row, column), restsOn));
             }
         }
 
         return cells;
     }
+
+    /// <summary>id kardus = row × 6 + column.</summary>
+    public static int Id(int row, int column) => (row * 6) + column;
 
     public static DetectedCell At(List<DetectedCell> cells, int row, int column) =>
         cells.Single(c => c.Row == row && c.Column == column);

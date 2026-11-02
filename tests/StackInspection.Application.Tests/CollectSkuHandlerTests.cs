@@ -42,6 +42,49 @@ public class CollectSkuHandlerTests
         Assert.Empty(result.Warnings);
     }
 
+    [Fact]
+    public async Task ValidPhoto_ReturnsTimingsThatSumToProcessingTime()
+    {
+        (List<CartonBox> cartons, Dictionary<BoundingBox, (string?, string?)> texts) = Grid(2, 2, "68140913");
+        CollectSkuHandler handler = Build.Handler(new StubDecoder(3000, 4000), new StubDetector(cartons), new StubReader(texts));
+
+        CollectSkuResponse result = await handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None);
+
+        CollectSkuTimingsDto t = result.Timings;
+        long[] stages = [t.DecodeMs, t.InspectMs, t.DetectMs, t.OcrMs, t.SkuResolveMs, t.BuildMs];
+        Assert.All(stages, ms => Assert.True(ms >= 0));
+        Assert.Equal(result.ProcessingTimeMs, stages.Sum());
+    }
+
+    [Fact]
+    public async Task WideCartonOverTwoStacks_AppearsInTwoCellsWithSameId()
+    {
+        // dua kardus di lantai, satu kardus lebar di atas keduanya
+        CartonBox left = Build.Carton(300, 1000);
+        CartonBox right = Build.Carton(710, 1000);
+        CartonBox wide = Build.Carton(300, 690, w: 810);
+        Dictionary<BoundingBox, (string?, string?)> texts = new()
+        {
+            [left.Box] = ("68140913", null), [right.Box] = ("68140913", null), [wide.Box] = ("68410975", null),
+        };
+        CollectSkuHandler handler = Build.Handler(new StubDecoder(3000, 4000), new StubDetector([left, right, wide]), new StubReader(texts));
+
+        CollectSkuResponse result = await handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None);
+
+        Assert.Equal((4, 2, 2), (result.Cells.Count, result.RowCount, result.ColumnCount));
+        CellDto[] top = [.. result.Cells.Where(c => c.Row == 0)];
+        Assert.Equal(2, top.Length);
+        Assert.Single(top.Select(c => c.Id).Distinct());
+        Assert.Equal([0, 1], top.Select(c => c.Column));
+        Assert.All(top, c => Assert.Equal((1, "68410975"), (c.Level, c.Sku)));
+        int[] bottomIds = [.. result.Cells.Where(c => c.Row == 1).Select(c => c.Id!.Value)];
+        Assert.All(top, c => Assert.Equal(bottomIds.Order(), c.RestsOn!));
+        Assert.Equal([("68140913", 2), ("68410975", 1)], result.DistinctSkus.Select(d => (d.Sku, d.Count)));
+        Assert.Equal(2, result.Stacks.Count);
+        Assert.All(result.Stacks, s => Assert.Equal(top[0].Id, s.CartonIdsBottomToTop[^1]));
+        Assert.Contains(CollectWarnings.IrregularGrid, result.Warnings);
+    }
+
     [Theory]
     [InlineData(1600, 1200)] // sisi terpanjang < 2048
     [InlineData(2048, 900)] // sisi terpanjang cukup, tapi 1.84 MP < 2 MP
@@ -77,7 +120,7 @@ public class CollectSkuHandlerTests
     {
         (List<CartonBox> cartons, Dictionary<BoundingBox, (string?, string?)> texts) = Grid(1, 1, "68140913");
         CollectSkuHandler handler = Build.Handler(
-            new StubDecoder(3000, 4000), new StubDetector(cartons), new StubReader(texts), new StubSpotter("Note : Captured by GPS Map Camera", "Lat -5.468766, Long 122.598604"));
+            new StubDecoder(3000, 4000), new StubDetector(cartons), new StubReader(texts), new StubSpotter("Note : Captured by GPS Map Camera", "Lat -5.468766, Long 122.598604"), cameraOverlay: true);
 
         PhotoNotInspectableException error = await Assert.ThrowsAsync<PhotoNotInspectableException>(
             () => handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None));
@@ -86,11 +129,23 @@ public class CollectSkuHandlerTests
     }
 
     [Fact]
+    public async Task CameraOverlayDisabled_SkipsOcr()
+    {
+        (List<CartonBox> cartons, Dictionary<BoundingBox, (string?, string?)> texts) = Grid(1, 1, "68140913");
+        StubSpotter spotter = new("Note : Captured by GPS Map Camera", "Lat -5.468766, Long 122.598604");
+        CollectSkuHandler handler = Build.Handler(new StubDecoder(3000, 4000), new StubDetector(cartons), new StubReader(texts), spotter);
+
+        CollectSkuResponse result = await handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None);
+
+        Assert.Single(result.Cells);
+    }
+
+    [Fact]
     public async Task SingleKeyword_IsNotEnoughForOverlay()
     {
         (List<CartonBox> cartons, Dictionary<BoundingBox, (string?, string?)> texts) = Grid(1, 1, "68140913");
         CollectSkuHandler handler = Build.Handler(
-            new StubDecoder(3000, 4000), new StubDetector(cartons), new StubReader(texts), new StubSpotter("LONG LASTING"));
+            new StubDecoder(3000, 4000), new StubDetector(cartons), new StubReader(texts), new StubSpotter("LONG LASTING"), cameraOverlay: true);
 
         CollectSkuResponse result = await handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None);
 
@@ -200,6 +255,45 @@ public class CollectSkuHandlerTests
 
         Assert.Single(result.Cells, c => c.Sku == "85730554" && c.ReadStatus == ReadStatus.Matched);
         Assert.DoesNotContain(CollectWarnings.SkuCorrectedByMajority, result.Warnings);
+    }
+
+    [Theory]
+    [InlineData(5, 0.0)]     // 4 kardus < minimal 5
+    [InlineData(0, 0.15)]    // 4 kardus 400x300 di foto 3000x4000 = 4% luas foto
+    public async Task WeakDetection_IsFastRejectedBeforeOcr(int minCount, double minCoverage)
+    {
+        (List<CartonBox> cartons, Dictionary<BoundingBox, (string?, string?)> texts) = Grid(2, 2, "68140913");
+        StubReader reader = new(texts);
+        CollectSkuHandler handler = Build.Handler(
+            new StubDecoder(3000, 4000), new StubDetector(cartons), reader, minCartonCount: minCount, minCartonCoverage: minCoverage);
+
+        PhotoNotInspectableException error = await Assert.ThrowsAsync<PhotoNotInspectableException>(
+            () => handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None));
+
+        Assert.Equal((PhotoRejectReasons.FastRejected, 0), (error.Reason, reader.Calls));
+    }
+
+    [Fact]
+    public async Task DenseLoad_PassesDetectionGate()
+    {
+        (List<CartonBox> cartons, Dictionary<BoundingBox, (string?, string?)> texts) = Grid(8, 6, "68140913");
+        CollectSkuHandler handler = Build.Handler(
+            new StubDecoder(3000, 4000), new StubDetector(cartons), new StubReader(texts), minCartonCount: 5, minCartonCoverage: 0.15);
+
+        CollectSkuResponse result = await handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None);
+
+        Assert.Equal(48, result.Cells.Count);
+    }
+
+    [Fact]
+    public async Task NullCandidate_IsIgnored()
+    {
+        (List<CartonBox> cartons, Dictionary<BoundingBox, (string?, string?)> texts) = Grid(2, 2, "65730554");
+        CollectSkuHandler handler = Build.Handler(new StubDecoder(3000, 4000), new StubDetector(cartons), new StubReader(texts));
+
+        CollectSkuResponse result = await handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, [null!, "65730554"]), None);
+
+        Assert.All(result.Cells, c => Assert.Equal(("65730554", ReadStatus.Matched), (c.Sku, c.ReadStatus)));
     }
 
     [Fact]

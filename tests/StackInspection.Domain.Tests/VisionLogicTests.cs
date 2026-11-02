@@ -59,7 +59,7 @@ public class GridBuilderTests
         new(column * 110, (row * 90) + dy, (column * 110) + width, (row * 90) + 80 + dy);
 
     [Fact]
-    public void ShuffledBoxes_GetRowColumnLevel()
+    public void ShuffledBoxes_GetRowColumnLevelAndSupport()
     {
         List<BoundingBox> boxes = [];
         for (int column = 0; column < 3; column++)
@@ -77,11 +77,17 @@ public class GridBuilderTests
         Assert.Equal((4, 3, false), (layout.RowCount, layout.ColumnCount, layout.IsIrregular));
         for (int i = 0; i < shuffled.Length; i++)
         {
-            GridPosition position = layout.Positions[i];
-            Assert.Equal((int)(shuffled[i].X1 / 110), position.Column);
-            Assert.Equal((int)(shuffled[i].Y1 / 90), position.Row);
-            Assert.Equal(3 - position.Row, position.Level);
+            CartonPlacement carton = layout.Cartons[i];
+            GridCell cell = Assert.Single(carton.Cells);
+            Assert.Equal((int)(shuffled[i].X1 / 110), cell.Column);
+            Assert.Equal((int)(shuffled[i].Y1 / 90), cell.Row);
+            Assert.Equal(3 - cell.Row, carton.Level);
+            int[] expectedSupport = [.. Enumerable.Range(0, shuffled.Length)
+                .Where(j => shuffled[j].X1 == shuffled[i].X1 && shuffled[j].Y1 == shuffled[i].Y1 + 90)];
+            Assert.Equal(expectedSupport, carton.RestsOn);
         }
+
+        Assert.Equal(3, layout.Paths.BottomToTop.Count);
     }
 
     [Fact]
@@ -92,20 +98,20 @@ public class GridBuilderTests
 
         GridLayout layout = GridBuilder.Build(boxes);
 
-        Assert.Equal([3, 2, 1, 0, 1, 0], layout.Positions.Select(p => p.Level));
-        Assert.Equal([2, 3], layout.Positions.Skip(4).Select(p => p.Row));
+        Assert.Equal([3, 2, 1, 0, 1, 0], layout.Cartons.Select(c => c.Level));
+        Assert.Equal([2, 3], layout.Cartons.Skip(4).Select(c => c.Cells[0].Row));
     }
 
     [Fact]
     public void SlightlyTiltedRows_StillGrouped()
     {
-        // CenterY bergeser ±20% tinggi kardus (80 px → ±16 px)
-        BoundingBox[] boxes = [Box(0, 0, -16), Box(1, 0, 16), Box(2, 0, 0), Box(0, 1, 16), Box(1, 1, -16), Box(2, 1, 0)];
+        // tepi atas/bawah bergeser ±10% tinggi kardus (80 px → ±8 px) masih satu baris grid
+        BoundingBox[] boxes = [Box(0, 0, -8), Box(1, 0, 8), Box(2, 0, 0), Box(0, 1, 8), Box(1, 1, -8), Box(2, 1, 0)];
 
         GridLayout layout = GridBuilder.Build(boxes);
 
         Assert.Equal(2, layout.RowCount);
-        Assert.Equal([0, 0, 0, 1, 1, 1], layout.Positions.Select(p => p.Row));
+        Assert.Equal([0, 0, 0, 1, 1, 1], layout.Cartons.Select(c => c.Cells[0].Row));
     }
 
     [Fact]
