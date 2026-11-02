@@ -1,5 +1,6 @@
 using StackInspection.Application.Abstractions;
 using StackInspection.Application.CollectSku;
+using StackInspection.Application.Configuration;
 using StackInspection.Application.Contracts;
 using StackInspection.Application.Exceptions;
 using StackInspection.Domain;
@@ -208,34 +209,46 @@ public class CollectSkuHandlerTests
         Assert.All(result.Cells, c => Assert.Equal(ReadStatus.Matched, c.ReadStatus));
     }
 
+    private static readonly OcrScanOptions[] TwoScans =
+    [
+        new() { WidthRatio = 0.6, HeightRatio = 0.3, MinAreaWidth = 320 },
+        new() { WidthRatio = 1.0, HeightRatio = 0.4, MinAreaWidth = 480 },
+    ];
+
     [Fact]
-    public async Task OcrEnlargedRetry_OnlyForUnreadCartons_WithFullWidthLabelArea()
+    public async Task OcrRetryScans_EachScanOnlyForCartonsStillUnread()
     {
         CartonBox labelled = Build.Carton(300, 600);
-        CartonBox smallText = Build.Carton(710, 600);
+        CartonBox small = Build.Carton(710, 600);
+        CartonBox smaller = Build.Carton(1120, 600);
         StubReader reader = new(new Dictionary<BoundingBox, (string?, string?)> { [labelled.Box] = ("68410975", null) });
-        reader.EnlargedOnly[smallText.Box] = "68582213"; // angka kecil: hanya terdeteksi setelah diperbesar
+        reader.EnlargedOnly[small.Box] = ("68582213", 320); // terbaca di scan pertama
+        reader.EnlargedOnly[smaller.Box] = ("68140913", 480); // baru terbaca di scan kedua
         CollectSkuHandler handler = Build.Handler(
-            new StubDecoder(3000, 4000), new StubDetector([labelled, smallText]), reader, ocrMinAreaWidth: 320);
+            new StubDecoder(3000, 4000), new StubDetector([labelled, small, smaller]), reader, ocrRetryScans: TwoScans);
 
-        CollectSkuResponse result = await handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, ["68410975", "68582213"]), None);
+        CollectSkuResponse result = await handler.HandleAsync(
+            new CollectSkuCommand(Build.Jpeg, ["68410975", "68582213", "68140913"]), None);
 
-        Assert.Equal([OcrMode.Native, OcrMode.Enlarged], reader.Modes);
-        // baca ulang hanya kardus yang belum terbaca: selebar kardus × 30 % tinggi
-        Assert.Equal(new BoundingBox(710, 600, 1110, 690), Assert.Single(reader.LastRegions));
+        Assert.Equal([0, 320, 480], reader.Scans);
+        // scan kedua hanya kardus yang masih belum terbaca: selebar kardus × 40 % tinggi
+        Assert.Equal(new BoundingBox(1120, 600, 1520, 720), Assert.Single(reader.LastRegions));
         Assert.All(result.Cells, c => Assert.Equal(ReadStatus.Matched, c.ReadStatus));
     }
 
     [Fact]
-    public async Task OcrEnlargedRetry_SkippedWhenAllCartonsRead()
+    public async Task OcrRetryScans_StopWhenAllCartonsRead()
     {
         CartonBox labelled = Build.Carton(300, 600);
+        CartonBox small = Build.Carton(710, 600);
         StubReader reader = new(new Dictionary<BoundingBox, (string?, string?)> { [labelled.Box] = ("68410975", null) });
-        CollectSkuHandler handler = Build.Handler(new StubDecoder(3000, 4000), new StubDetector([labelled]), reader, ocrMinAreaWidth: 320);
+        reader.EnlargedOnly[small.Box] = ("68582213", 320);
+        CollectSkuHandler handler = Build.Handler(
+            new StubDecoder(3000, 4000), new StubDetector([labelled, small]), reader, ocrRetryScans: TwoScans);
 
-        await handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, ["68410975"]), None);
+        await handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, ["68410975", "68582213"]), None);
 
-        Assert.Equal([OcrMode.Native], reader.Modes);
+        Assert.Equal([0, 320], reader.Scans);
     }
 
     [Fact]

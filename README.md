@@ -71,7 +71,7 @@ tidak di-commit) cukup untuk development. Vision asli diuji di Linux (Docker) da
 | `Vision:MaxConcurrentInspections` | 1 | Collect SKU/Preview yang diproses bersamaan; selebihnya langsung 429 `SERVER_BUSY` (+ `Retry-After`) |
 | `Vision:OcrFullCartonFallback` | `false` | OCR tahap 2: kardus yang SKU-nya tidak terbaca dari area label di-OCR ulang seluruh kardusnya. `false` = hanya area label (jauh lebih cepat; label di luar area kiri-atas tidak terbaca) |
 | `Vision:OcrTileOverlap` | `320` | Tumpang tindih tile OCR (px) untuk area yang lebih besar dari satu halaman deteksi 960 px |
-| `Vision:OcrMinAreaWidth` | `320` | OCR tahap 1b: kardus yang belum terbaca di tahap 1 (resolusi asli) dibaca ulang dengan area label selebar kardus, diperbesar sampai minimal selebar ini (px). Kardus yang sudah terbaca tidak disentuh. 0 = mati |
+| `Vision:OcrRetryScans` | 0,6×0,3 @320 px; 1,0×0,4 @480 px | OCR tahap 1b, baca ulang berbagai ukuran: setiap scan (`WidthRatio` × `HeightRatio` area label kiri-atas, diperbesar sampai minimal `MinAreaWidth` px) hanya untuk kardus yang masih belum terbaca. Kardus yang sudah terbaca tidak disentuh. Kosong = mati. Env: `Vision__OcrRetryScans__0__MinAreaWidth=400` |
 | `Vision:OcrMaxUpscale` | `3.0` | Batas perbesaran area label |
 | `Vision:OcrBoxScoreThreshold` | `0.5` | Skor minimal kotak teks hasil deteksi pada tahap 1b (tahap 1 tetap default PaddleOCR 0,7); lebih rendah = lebih sensitif |
 | `Vision:ContainmentThreshold` | 0.8 | Kotak yang ≥80% luasnya berada di dalam kotak lain dibuang sebagai duplikat (0 = nonaktif) |

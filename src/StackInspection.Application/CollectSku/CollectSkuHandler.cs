@@ -112,23 +112,27 @@ public sealed partial class CollectSkuHandler
             .ReadAllAsync(
                 image,
                 [.. front.Kept.Select(c => LabelRegion(c.Box, _vision.LabelCropWidthRatio, _vision.LabelCropHeightRatio))],
-                OcrMode.Native,
+                0,
                 cancellationToken)
             .ConfigureAwait(false);
         IReadOnlyList<SkuReading> readings = [.. front.Kept.Select(c => ReadSku(c.Box, texts, candidates))];
-        if (_vision.OcrMinAreaWidth > 0)
+        foreach (OcrScanOptions scan in _vision.OcrRetryScans)
         {
-            // OCR tahap 1b: kardus yang belum terbaca dibaca ulang, area label selebar kardus dan diperbesar
-            // (angka kecil/terpotong batas area). Kardus yang sudah terbaca tidak disentuh.
+            // OCR tahap 1b: kardus yang masih belum terbaca dibaca ulang dengan ukuran area/perbesaran scan ini
+            // (angka kecil, atau terpotong batas area). Kardus yang sudah terbaca tidak disentuh.
             BoundingBox[] unread = [.. front.Kept
                 .Where((_, i) => readings[i].Status is not (ReadStatus.Matched or ReadStatus.Corrected))
-                .Select(c => LabelRegion(c.Box, 1.0, _vision.LabelCropHeightRatio))];
-            if (unread.Length > 0)
+                .Select(c => LabelRegion(c.Box, scan.WidthRatio, scan.HeightRatio))];
+            if (unread.Length == 0)
             {
-                IReadOnlyList<OcrText> more = await _reader.ReadAllAsync(image, unread, OcrMode.Enlarged, cancellationToken).ConfigureAwait(false);
-                texts = [.. texts, .. more];
-                readings = [.. front.Kept.Select(c => ReadSku(c.Box, texts, candidates))];
+                break;
             }
+
+            IReadOnlyList<OcrText> more = await _reader
+                .ReadAllAsync(image, unread, scan.MinAreaWidth, cancellationToken)
+                .ConfigureAwait(false);
+            texts = [.. texts, .. more];
+            readings = [.. front.Kept.Select(c => ReadSku(c.Box, texts, candidates))];
         }
 
         if (_vision.OcrFullCartonFallback)
@@ -139,7 +143,7 @@ public sealed partial class CollectSkuHandler
                 .Select(c => c.Box)];
             if (unread.Length > 0)
             {
-                IReadOnlyList<OcrText> more = await _reader.ReadAllAsync(image, unread, OcrMode.Native, cancellationToken).ConfigureAwait(false);
+                IReadOnlyList<OcrText> more = await _reader.ReadAllAsync(image, unread, 0, cancellationToken).ConfigureAwait(false);
                 texts = [.. texts, .. more];
                 readings = [.. front.Kept.Select(c => ReadSku(c.Box, texts, candidates))];
             }

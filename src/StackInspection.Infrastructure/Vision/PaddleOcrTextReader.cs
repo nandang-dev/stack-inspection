@@ -40,7 +40,6 @@ public sealed partial class PaddleOcrTextReader : ISkuLabelReader, ITextSpotter,
     private readonly PaddleOcrAll _ocr;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly int _tileOverlap;
-    private readonly int _minAreaWidth;
     private readonly double _maxUpscale;
     private readonly float? _nativeBoxScore;
     private readonly float _enlargedBoxScore;
@@ -50,7 +49,6 @@ public sealed partial class PaddleOcrTextReader : ISkuLabelReader, ITextSpotter,
     {
         ArgumentNullException.ThrowIfNull(options);
         _tileOverlap = options.Value.OcrTileOverlap;
-        _minAreaWidth = options.Value.OcrMinAreaWidth;
         _maxUpscale = options.Value.OcrMaxUpscale;
         _logger = logger;
         _ocr = new PaddleOcrAll(LocalFullModels.ChineseV5, PaddleDevice.OneDnn(cpuMathThreadCount: options.Value.Threads))
@@ -63,7 +61,7 @@ public sealed partial class PaddleOcrTextReader : ISkuLabelReader, ITextSpotter,
     }
 
     public async Task<IReadOnlyList<OcrText>> ReadAllAsync(
-        VisionImage image, IReadOnlyList<BoundingBox> regions, OcrMode mode, CancellationToken cancellationToken)
+        VisionImage image, IReadOnlyList<BoundingBox> regions, int minAreaWidth, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(regions);
         if (regions.Count == 0)
@@ -73,8 +71,8 @@ public sealed partial class PaddleOcrTextReader : ISkuLabelReader, ITextSpotter,
 
         OpenCvImage source = OpenCvImage.From(image);
         OcrRect[] areas = [.. regions.Select(r => Clamp(r, AreaMargin, source.Width, source.Height)).Where(r => r.Width > 0 && r.Height > 0)];
-        bool enlarged = mode == OcrMode.Enlarged;
-        int minWidth = enlarged ? _minAreaWidth : 0;
+        bool enlarged = minAreaWidth > 0;
+        int minWidth = Math.Max(0, minAreaWidth);
         OcrPacking packing = OcrPacker.Pack(areas, TileSize, PieceGap, _tileOverlap, minWidth, _maxUpscale);
         if (packing.PageCount == 0)
         {
@@ -121,7 +119,7 @@ public sealed partial class PaddleOcrTextReader : ISkuLabelReader, ITextSpotter,
             IReadOnlyList<int> kept = OcrTiling.Deduplicate([.. inside.Select(t => t.Box)], DuplicateContainment);
             if (kept.Count == 0)
             {
-                LogOcr(_logger, mode, regions.Count, upscaled, packing.PageCount, (long)waited.TotalMilliseconds, (long)detectTime.TotalMilliseconds, 0, 0);
+                LogOcr(_logger, minWidth, regions.Count, upscaled, packing.PageCount, (long)waited.TotalMilliseconds, (long)detectTime.TotalMilliseconds, 0, 0);
                 return [];
             }
 
@@ -143,7 +141,7 @@ public sealed partial class PaddleOcrTextReader : ISkuLabelReader, ITextSpotter,
 
                 LogOcr(
                     _logger,
-                    mode,
+                    minWidth,
                     regions.Count,
                     upscaled,
                     packing.PageCount,
@@ -247,9 +245,9 @@ public sealed partial class PaddleOcrTextReader : ISkuLabelReader, ITextSpotter,
 
     [LoggerMessage(
         Level = Microsoft.Extensions.Logging.LogLevel.Information,
-        Message = "OCR label {Mode}: {Regions} area ({Upscaled} diperbesar) → {Pages} halaman deteksi, antre {WaitMs} ms, deteksi {DetectMs} ms, pengenalan {RecognizeMs} ms, {Texts} teks")]
+        Message = "OCR label (min {MinWidth} px): {Regions} area ({Upscaled} diperbesar) → {Pages} halaman deteksi, antre {WaitMs} ms, deteksi {DetectMs} ms, pengenalan {RecognizeMs} ms, {Texts} teks")]
     private static partial void LogOcr(
-        ILogger logger, OcrMode mode, int regions, int upscaled, int pages, long waitMs, long detectMs, long recognizeMs, int texts);
+        ILogger logger, int minWidth, int regions, int upscaled, int pages, long waitMs, long detectMs, long recognizeMs, int texts);
 
     public void Dispose()
     {

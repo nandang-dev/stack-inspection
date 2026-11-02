@@ -56,17 +56,20 @@ internal sealed class StubReader(Dictionary<BoundingBox, (string? Label, string?
 
     public IReadOnlyList<BoundingBox> LastRegions { get; private set; } = [];
 
-    public List<OcrMode> Modes { get; } = [];
+    /// <summary>minAreaWidth setiap panggilan (0 = resolusi asli).</summary>
+    public List<int> Scans { get; } = [];
 
-    /// <summary>Teks yang hanya terbaca pada <see cref="OcrMode.Enlarged"/> (angka kecil), posisinya seperti label.</summary>
-    public Dictionary<BoundingBox, string> EnlargedOnly { get; } = [];
+    /// <summary>
+    /// Teks yang hanya terbaca jika diperbesar minimal <c>MinWidth</c> (angka kecil), posisinya seperti label.
+    /// </summary>
+    public Dictionary<BoundingBox, (string Text, int MinWidth)> EnlargedOnly { get; } = [];
 
     public Task<IReadOnlyList<OcrText>> ReadAllAsync(
-        VisionImage image, IReadOnlyList<BoundingBox> regions, OcrMode mode, CancellationToken cancellationToken)
+        VisionImage image, IReadOnlyList<BoundingBox> regions, int minAreaWidth, CancellationToken cancellationToken)
     {
         Calls++;
         LastRegions = regions;
-        Modes.Add(mode);
+        Scans.Add(minAreaWidth);
         List<OcrText> result = [];
         foreach ((BoundingBox box, (string? label, string? whole)) in texts)
         {
@@ -81,10 +84,9 @@ internal sealed class StubReader(Dictionary<BoundingBox, (string? Label, string?
             }
         }
 
-        if (mode == OcrMode.Enlarged)
-        {
-            result.AddRange(EnlargedOnly.Select(e => new OcrText(e.Value, 0.9, new BoundingBox(e.Key.X1 + 10, e.Key.Y1 + 10, e.Key.X1 + 110, e.Key.Y1 + 40))));
-        }
+        result.AddRange(EnlargedOnly
+            .Where(e => minAreaWidth > 0 && minAreaWidth >= e.Value.MinWidth)
+            .Select(e => new OcrText(e.Value.Text, 0.9, new BoundingBox(e.Key.X1 + 10, e.Key.Y1 + 10, e.Key.X1 + 110, e.Key.Y1 + 40))));
 
         // seperti OCR asli: hanya teks yang titik tengahnya di dalam area yang diminta
         return Task.FromResult<IReadOnlyList<OcrText>>([.. result.Where(t => t.Box is BoundingBox b && regions.Any(r =>
@@ -127,7 +129,7 @@ internal static class Build
         double minCartonCoverage = 0,
         ICartonEmbedder? embedder = null,
         bool ocrFullCartonFallback = false,
-        int ocrMinAreaWidth = 0)
+        IReadOnlyList<OcrScanOptions>? ocrRetryScans = null)
     {
         // gate fast reject dimatikan secara default supaya grid kecil di test lain tidak tertolak
         IOptions<PhotoOptions> photo = Options.Create(new PhotoOptions
@@ -152,7 +154,7 @@ internal static class Build
             {
                 AppearanceModel = embedder is null ? string.Empty : "carton-embed-v1",
                 OcrFullCartonFallback = ocrFullCartonFallback,
-                OcrMinAreaWidth = ocrMinAreaWidth,
+                OcrRetryScans = [.. ocrRetryScans ?? []],
             }),
             Options.Create(new FrontLayerOptions()),
             Options.Create(new UploadOptions { MaxFileSizeMb = maxFileMb }),
