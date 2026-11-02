@@ -98,6 +98,8 @@ public sealed class StackInspectionsApiTests : IClassFixture<StackInspectionsApi
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("text/html", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal("attachment", response.Content.Headers.ContentDisposition?.DispositionType);
+        Assert.EndsWith(".html", response.Content.Headers.ContentDisposition?.FileName, StringComparison.Ordinal);
         Assert.StartsWith("<!doctype html>", html, StringComparison.Ordinal);
         Assert.Contains("41.67%", html, StringComparison.Ordinal);
         Assert.Contains("MAX_STACK_EXCEEDED", html, StringComparison.Ordinal);

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Net.Http.Headers;
 using StackInspection.Api.Contracts;
 using StackInspection.Api.Rendering;
 using StackInspection.Api.Swagger;
@@ -100,13 +101,16 @@ public sealed class StackInspectionsController : ControllerBase
     /// yang akan digambar UI dari <c>cells</c> (sel ber-<c>id</c> sama digabung, dus melanggar diberi tanda merah),
     /// <b>posisi dus di foto</b> (SVG koordinat asli + garis <c>restsOn</c>), legenda SKU, tabel pelanggaran, dan
     /// jalur tumpukan. Arahkan kursor ke dus/baris tabel/jalur untuk menyorot dus yang sama di semua panel.
+    /// <br/>Response dikirim sebagai lampiran (<c>Content-Disposition: attachment</c>): di Swagger klik
+    /// <b>Download file</b> pada hasil Execute lalu buka file <c>.html</c>-nya di browser.
     /// <br/>Error tetap JSON seperti Collect SKU: 400 (file/model/masterSkus tidak valid) dan 422
     /// (<c>PHOTO_NOT_INSPECTABLE</c>).
     /// </remarks>
     /// <param name="request">Foto, candidateSkus, model, dan masterSkus (JSON array, opsional).</param>
     /// <param name="cancellationToken">Token pembatalan.</param>
     /// <response code="200">
-    /// Halaman HTML mandiri (<c>text/html; charset=utf-8</c>, tanpa file/library eksternal, responsive, mode
+    /// Halaman HTML mandiri (<c>text/html; charset=utf-8</c>, lampiran <c>stack-preview-{inspectionId}.html</c>,
+    /// tanpa file/library eksternal, responsive, mode
     /// terang/gelap). Jika <c>masterSkus</c> diisi, halaman menampilkan skor dan pelanggaran Analyze; jika kosong,
     /// hanya susunan dus dari Collect SKU.
     /// </response>
@@ -139,6 +143,11 @@ public sealed class StackInspectionsController : ControllerBase
         AnalyzeStackResponse? analyze = masters.Count == 0
             ? null
             : _analyze.Handle(new AnalyzeStackRequest { CollectResult = collect, MasterSkus = masters });
+        // attachment: Swagger UI menampilkan tombol "Download file" (HTML tidak dirender di Swagger)
+        Response.Headers.ContentDisposition = new ContentDispositionHeaderValue("attachment")
+        {
+            FileName = $"stack-preview-{collect.InspectionId:N}.html",
+        }.ToString();
         return Content(StackLayoutHtmlRenderer.Render(collect, analyze), "text/html; charset=utf-8");
     }
 
