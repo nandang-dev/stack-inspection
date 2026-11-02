@@ -42,6 +42,20 @@ public class CollectSkuHandlerTests
         Assert.Empty(result.Warnings);
     }
 
+    [Fact]
+    public async Task ValidPhoto_ReturnsTimingsThatSumToProcessingTime()
+    {
+        (List<CartonBox> cartons, Dictionary<BoundingBox, (string?, string?)> texts) = Grid(2, 2, "68140913");
+        CollectSkuHandler handler = Build.Handler(new StubDecoder(3000, 4000), new StubDetector(cartons), new StubReader(texts));
+
+        CollectSkuResponse result = await handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None);
+
+        CollectSkuTimingsDto t = result.Timings;
+        long[] stages = [t.DecodeMs, t.InspectMs, t.DetectMs, t.OcrMs, t.SkuResolveMs, t.BuildMs];
+        Assert.All(stages, ms => Assert.True(ms >= 0));
+        Assert.Equal(result.ProcessingTimeMs, stages.Sum());
+    }
+
     [Theory]
     [InlineData(1600, 1200)] // sisi terpanjang < 2048
     [InlineData(2048, 900)] // sisi terpanjang cukup, tapi 1.84 MP < 2 MP

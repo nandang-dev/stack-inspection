@@ -117,6 +117,31 @@ public sealed class CollectSkuResponse
 
     /// <summary>Waktu proses (ms).</summary>
     public long ProcessingTimeMs { get; init; }
+
+    /// <summary>Rincian waktu proses per tahap (ms); jumlahnya ≈ <c>processingTimeMs</c>.</summary>
+    public CollectSkuTimingsDto Timings { get; init; } = new();
+}
+
+/// <summary>Waktu eksekusi tiap tahap pipeline Collect SKU (ms).</summary>
+public sealed class CollectSkuTimingsDto
+{
+    /// <summary>Validasi upload + decode gambar (termasuk orientasi EXIF).</summary>
+    public long DecodeMs { get; init; }
+
+    /// <summary>Photo gate: resolusi, fast-reject classifier, cek stempel kamera.</summary>
+    public long InspectMs { get; init; }
+
+    /// <summary>Deteksi kardus + filter kotak bersarang, gate hasil deteksi, dan filter lapisan depan.</summary>
+    public long DetectMs { get; init; }
+
+    /// <summary>OCR semua kardus (termasuk menunggu giliran jika OCR sedang dipakai request lain).</summary>
+    public long OcrMs { get; init; }
+
+    /// <summary>Pencocokan SKU: fuzzy match, koreksi mayoritas, potongan nomor, dan inferensi tampilan.</summary>
+    public long SkuResolveMs { get; init; }
+
+    /// <summary>Penyusunan grid, stack, dan ringkasan response.</summary>
+    public long BuildMs { get; init; }
 }
 
 /// <summary>Kode peringatan Collect SKU.</summary>
