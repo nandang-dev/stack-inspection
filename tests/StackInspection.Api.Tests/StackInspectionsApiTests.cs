@@ -125,6 +125,8 @@ public sealed class StackInspectionsApiTests : IClassFixture<StackInspectionsApi
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Contains("masterSkus tidak diisi", html, StringComparison.Ordinal);
         Assert.DoesNotContain("Pelanggaran</h2>", html, StringComparison.Ordinal);
+        Assert.Contains("<span class=\"conf\">", html, StringComparison.Ordinal); // keyakinan per dus
+        Assert.Contains("Keyakinan OCR", html, StringComparison.Ordinal);
     }
 
     [Fact]

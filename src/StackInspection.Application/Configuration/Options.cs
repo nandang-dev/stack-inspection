@@ -106,6 +106,23 @@ public sealed class VisionOptions
     public int MajorityMaxDistance { get; set; } = 2;
 
     /// <summary>
+    /// Hasil baca yang terbaca langsung (<c>Matched</c>) dengan keyakinan OCR ≥ nilai ini tidak dikoreksi mayoritas:
+    /// varian produk asli yang labelnya jelas (65081663 di antara 65081657) dipertahankan. 1 = semua boleh dikoreksi.
+    /// Kalibrasi dari nilai keyakinan yang ditampilkan di Preview.
+    /// </summary>
+    [Range(0.0, 1.0)]
+    public double MajorityMaxConfidence { get; set; } = 0.97;
+
+    /// <summary>
+    /// Koreksi mayoritas dengan dukungan tampilan: selisih digit sampai nilai ini (di atas
+    /// <see cref="MajorityMaxDistance"/>) tetap dikoreksi jika tampilan kardus mirip ≥
+    /// <see cref="AppearanceMinSimilarity"/> dengan kardus SKU mayoritas (mis. 15690069 → 65590059, beda 3 digit).
+    /// Butuh <see cref="AppearanceModel"/>. 0 = nonaktif.
+    /// </summary>
+    [Range(0, 4)]
+    public int MajorityAppearanceMaxDistance { get; set; } = 3;
+
+    /// <summary>
     /// Potongan nomor SKU (label terpotong/tertutup) minimal sekian digit dilengkapi dari SKU yang terbaca utuh
     /// di foto atau dari <c>candidateSkus</c>. 0 = nonaktif.
     /// </summary>

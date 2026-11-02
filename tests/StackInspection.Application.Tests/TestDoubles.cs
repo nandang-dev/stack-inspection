@@ -129,7 +129,8 @@ internal static class Build
         double minCartonCoverage = 0,
         ICartonEmbedder? embedder = null,
         bool ocrFullCartonFallback = false,
-        IReadOnlyList<OcrScanOptions>? ocrRetryScans = null)
+        IReadOnlyList<OcrScanOptions>? ocrRetryScans = null,
+        double majorityMaxConfidence = 1.0)
     {
         // gate fast reject dimatikan secara default supaya grid kecil di test lain tidak tertolak
         IOptions<PhotoOptions> photo = Options.Create(new PhotoOptions
@@ -155,6 +156,7 @@ internal static class Build
                 AppearanceModel = embedder is null ? string.Empty : "carton-embed-v1",
                 OcrFullCartonFallback = ocrFullCartonFallback,
                 OcrRetryScans = [.. ocrRetryScans ?? []],
+                MajorityMaxConfidence = majorityMaxConfidence,
             }),
             Options.Create(new FrontLayerOptions()),
             Options.Create(new UploadOptions { MaxFileSizeMb = maxFileMb }),

@@ -51,7 +51,10 @@ public sealed class CellDto
     /// <summary>Teks mentah hasil OCR; <c>null</c> jika label tidak terlihat.</summary>
     public string? OcrText { get; init; }
 
-    /// <summary>Keyakinan OCR 0–1.</summary>
+    /// <summary>
+    /// Keyakinan OCR 0–1 untuk teks label yang dipakai. Pada <c>InferredByAppearance</c> berisi kemiripan tampilan
+    /// (cosine 0–1) ke kardus acuan terbaik, karena SKU-nya tidak dibaca dari label.
+    /// </summary>
     public double OcrConfidence { get; init; }
 
     /// <summary>Keyakinan deteksi kardus 0–1.</summary>
