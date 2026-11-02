@@ -114,13 +114,16 @@ public sealed class VisionOptions
     /// </summary>
     public string AppearanceModel { get; set; } = string.Empty;
 
-    /// <summary>Kemiripan tampilan (cosine) minimal ke kardus acuan.</summary>
+    /// <summary>
+    /// Kemiripan tampilan (cosine) minimal ke kardus acuan. Tuning case 01: kardus SKU &amp; desain sama 0,84–0,95,
+    /// SKU lain ≤ 0,75.
+    /// </summary>
     [Range(0.5, 1.0)]
-    public double AppearanceMinSimilarity { get; set; } = 0.95;
+    public double AppearanceMinSimilarity { get; set; } = 0.80;
 
     /// <summary>Jumlah kardus acuan ber-SKU sama yang harus lolos <see cref="AppearanceMinSimilarity"/>.</summary>
     [Range(1, 10)]
-    public int AppearanceMinReferences { get; set; } = 2;
+    public int AppearanceMinReferences { get; set; } = 1;
 
     /// <summary>Selisih kemiripan minimal antara SKU terbaik dan SKU lain.</summary>
     [Range(0.0, 0.5)]
