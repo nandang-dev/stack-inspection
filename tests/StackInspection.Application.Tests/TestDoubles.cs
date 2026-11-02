@@ -74,7 +74,9 @@ internal sealed class StubReader(Dictionary<BoundingBox, (string? Label, string?
             }
         }
 
-        return Task.FromResult<IReadOnlyList<OcrText>>(result);
+        // seperti OCR asli: hanya teks yang titik tengahnya di dalam area yang diminta
+        return Task.FromResult<IReadOnlyList<OcrText>>([.. result.Where(t => t.Box is BoundingBox b && regions.Any(r =>
+            b.CenterX >= r.X1 && b.CenterX <= r.X2 && b.CenterY >= r.Y1 && b.CenterY <= r.Y2))]);
     }
 }
 
@@ -111,7 +113,8 @@ internal static class Build
         bool cameraOverlay = false,
         int minCartonCount = 0,
         double minCartonCoverage = 0,
-        ICartonEmbedder? embedder = null)
+        ICartonEmbedder? embedder = null,
+        bool ocrFullCartonFallback = false)
     {
         // gate fast reject dimatikan secara default supaya grid kecil di test lain tidak tertolak
         IOptions<PhotoOptions> photo = Options.Create(new PhotoOptions
@@ -132,7 +135,11 @@ internal static class Build
             reader,
             embedder ?? new StubEmbedder(_ => []),
             inspectability,
-            Options.Create(new VisionOptions { AppearanceModel = embedder is null ? string.Empty : "carton-embed-v1" }),
+            Options.Create(new VisionOptions
+            {
+                AppearanceModel = embedder is null ? string.Empty : "carton-embed-v1",
+                OcrFullCartonFallback = ocrFullCartonFallback,
+            }),
             Options.Create(new FrontLayerOptions()),
             Options.Create(new UploadOptions { MaxFileSizeMb = maxFileMb }),
             photo,

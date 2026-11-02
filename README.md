@@ -68,6 +68,8 @@ tidak di-commit) cukup untuk development. Vision asli diuji di Linux (Docker) da
 | `Vision:DefaultModel` | `carton-v1` | Model jika request tidak memilih `model` |
 | `Vision:InputSize` / `ConfidenceThreshold` / `IouThreshold` | 960 / 0.5 / 0.5 | Default jika `model-card.json` tidak mencantumkannya |
 | `Vision:Threads` | 4 | Thread ONNX Runtime dan PaddleOCR (samakan dengan jumlah vCPU) |
+| `Vision:OcrFullCartonFallback` | `false` | OCR tahap 2: kardus yang SKU-nya tidak terbaca dari area label di-OCR ulang seluruh kardusnya. `false` = hanya area label (jauh lebih cepat; label di luar area kiri-atas tidak terbaca) |
+| `Vision:OcrTileOverlap` | `320` | Tumpang tindih tile OCR (px) untuk area yang lebih besar dari satu halaman deteksi 960 px |
 | `Vision:ContainmentThreshold` | 0.8 | Kotak yang ≥80% luasnya berada di dalam kotak lain dibuang sebagai duplikat (0 = nonaktif) |
 | `Vision:MajorityMinCount` / `MajorityDominance` / `MajorityMaxDistance` | 3 / 3 / 1 | Hanya jika `candidateSkus` kosong: hasil baca yang selisih ≤1 digit dari SKU yang muncul ≥3× dan ≥3× lebih sering dikoreksi ke SKU itu (`Corrected`, warning `SKU_CORRECTED_BY_MAJORITY`). `MajorityMinCount` 0 = nonaktif |
 | `Photo:MinLongSide` / `MinMegapixels` | 2048 / 2.0 | Gate resolusi: sisi terpanjang (px) **dan** jumlah piksel (MP) minimal. `MinMegapixels` 0 = tidak dicek |

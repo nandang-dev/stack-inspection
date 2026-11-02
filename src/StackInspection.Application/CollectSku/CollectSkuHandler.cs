@@ -19,8 +19,8 @@ public sealed record SkuReading(string Sku, string? OcrText, double Confidence, 
 
 /// <summary>
 /// Pipeline Collect SKU: validasi upload → decode → photo gate → deteksi → buang kotak bersarang →
-/// filter lapisan depan → OCR sekali untuk semua kardus → teks dicocokkan ke kardus berdasarkan posisi
-/// (area label dulu, fallback seluruh kardus) → fuzzy match → koreksi mayoritas → lengkapi potongan nomor →
+/// filter lapisan depan → OCR area label semua kardus (tahap 2 opsional: seluruh kardus yang belum terbaca) →
+/// teks dicocokkan ke kardus berdasarkan posisi (area label dulu, fallback seluruh kardus) → fuzzy match → koreksi mayoritas → lengkapi potongan nomor →
 /// SKU dari kardus yang tampilannya mirip → grid tampilan + relasi tumpuan (satu entri cell per sel grid).
 /// </summary>
 public sealed partial class CollectSkuHandler
@@ -107,11 +107,29 @@ public sealed partial class CollectSkuHandler
         }
 
         long filterMs = stopwatch.ElapsedMilliseconds;
+        // OCR tahap 1: hanya area label setiap kardus (kiri-atas)
         IReadOnlyList<OcrText> texts = await _reader
-            .ReadAllAsync(image, [.. front.Kept.Select(c => c.Box)], cancellationToken)
+            .ReadAllAsync(
+                image,
+                [.. front.Kept.Select(c => LabelRegion(c.Box, _vision.LabelCropWidthRatio, _vision.LabelCropHeightRatio))],
+                cancellationToken)
             .ConfigureAwait(false);
-        long ocrMs = stopwatch.ElapsedMilliseconds;
         IReadOnlyList<SkuReading> readings = [.. front.Kept.Select(c => ReadSku(c.Box, texts, candidates))];
+        if (_vision.OcrFullCartonFallback)
+        {
+            // OCR tahap 2: seluruh kardus, hanya untuk kardus yang belum terbaca dari area label
+            BoundingBox[] unread = [.. front.Kept
+                .Where((_, i) => readings[i].Status is not (ReadStatus.Matched or ReadStatus.Corrected))
+                .Select(c => c.Box)];
+            if (unread.Length > 0)
+            {
+                IReadOnlyList<OcrText> more = await _reader.ReadAllAsync(image, unread, cancellationToken).ConfigureAwait(false);
+                texts = [.. texts, .. more];
+                readings = [.. front.Kept.Select(c => ReadSku(c.Box, texts, candidates))];
+            }
+        }
+
+        long ocrMs = stopwatch.ElapsedMilliseconds;
         bool majorityCorrected = false;
         if (candidates.Length == 0)
         {

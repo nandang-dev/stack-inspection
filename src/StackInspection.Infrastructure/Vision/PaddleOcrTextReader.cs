@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using OpenCvSharp;
 using Sdcb.PaddleInference;
@@ -14,21 +16,22 @@ namespace StackInspection.Infrastructure.Vision;
 /// jadi semua akses diserialisasi dengan <see cref="SemaphoreSlim"/>(1, 1).
 /// </summary>
 /// <remarks>
-/// Label SKU dibaca sekali per foto: area semua kardus dipotong menjadi tile berukuran tetap di
-/// resolusi asli → deteksi teks per tile → teks yang berada di dalam kardus dikenali sekaligus dalam
-/// batch (potongan lurus). Jauh lebih cepat daripada menjalankan OCR penuh untuk setiap kardus (ratusan panggilan dengan
-/// ukuran input berbeda-beda).
+/// Label SKU dibaca sekali per foto: area yang diminta (biasanya area label setiap kardus) dikemas rapat ke
+/// beberapa halaman <see cref="TileSize"/> × <see cref="TileSize"/> di resolusi asli (<see cref="OcrPacker"/>) →
+/// deteksi teks per halaman → teks yang berada di dalam area dikenali sekaligus dalam batch (potongan lurus dari
+/// foto asli). Yang diproses hanya luas area itu sendiri, bukan seluruh muatan, dan jauh lebih cepat daripada OCR
+/// penuh per kardus (ratusan panggilan dengan ukuran input berbeda-beda).
 /// </remarks>
-public sealed class PaddleOcrTextReader : ISkuLabelReader, ITextSpotter, IDisposable
+public sealed partial class PaddleOcrTextReader : ISkuLabelReader, ITextSpotter, IDisposable
 {
     /// <summary>Strip stempel kamera cukup dibaca di resolusi rendah supaya cepat.</summary>
     private const int SpotMaxWidth = 1280;
 
-    /// <summary>Ukuran tile deteksi teks (di bawah MaxSize detector, jadi tidak diperkecil).</summary>
+    /// <summary>Ukuran halaman deteksi teks (di bawah MaxSize detector, jadi tidak diperkecil).</summary>
     public const int TileSize = 960;
 
-    /// <summary>Tumpang tindih antar tile; harus lebih lebar dari satu baris teks SKU agar ada tile yang memuatnya utuh.</summary>
-    public const int TileOverlap = 320;
+    /// <summary>Celah putih antar potongan di satu halaman agar teks dari potongan berbeda tidak menyatu.</summary>
+    private const int PieceGap = 16;
 
     private const int AreaMargin = 16;
     private const int RecognizeBatchSize = 16;
@@ -36,10 +39,14 @@ public sealed class PaddleOcrTextReader : ISkuLabelReader, ITextSpotter, IDispos
 
     private readonly PaddleOcrAll _ocr;
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly int _tileOverlap;
+    private readonly ILogger<PaddleOcrTextReader> _logger;
 
-    public PaddleOcrTextReader(IOptions<VisionOptions> options)
+    public PaddleOcrTextReader(IOptions<VisionOptions> options, ILogger<PaddleOcrTextReader> logger)
     {
         ArgumentNullException.ThrowIfNull(options);
+        _tileOverlap = options.Value.OcrTileOverlap;
+        _logger = logger;
         _ocr = new PaddleOcrAll(LocalFullModels.ChineseV5, PaddleDevice.OneDnn(cpuMathThreadCount: options.Value.Threads))
         {
             AllowRotateDetection = false,
@@ -57,40 +64,53 @@ public sealed class PaddleOcrTextReader : ISkuLabelReader, ITextSpotter, IDispos
         }
 
         OpenCvImage source = OpenCvImage.From(image);
-        BoundingBox area = OcrTiling.Union(regions, AreaMargin, source.Width, source.Height);
-        int offsetX = (int)Math.Floor(area.X1);
-        int offsetY = (int)Math.Floor(area.Y1);
-        using Mat? crop = source.Crop(area);
-        if (crop is null)
+        OcrRect[] areas = [.. regions.Select(r => Clamp(r, AreaMargin, source.Width, source.Height)).Where(r => r.Width > 0 && r.Height > 0)];
+        OcrPacking packing = OcrPacker.Pack(areas, TileSize, PieceGap, _tileOverlap);
+        if (packing.PageCount == 0)
         {
             return [];
         }
 
+        long waitStart = Stopwatch.GetTimestamp();
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            TimeSpan waited = Stopwatch.GetElapsedTime(waitStart);
+            long detectStart = Stopwatch.GetTimestamp();
             List<RotatedRect> found = [];
-            foreach (OcrTile tile in OcrTiling.Tiles(crop.Width, crop.Height, TileSize, TileOverlap))
+            foreach (IGrouping<int, OcrPiece> page in packing.Pieces.GroupBy(p => p.Page))
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                using Mat input = PadTile(crop, tile);
+                using Mat input = BuildPage(source.Mat, page);
                 foreach (RotatedRect rect in _ocr.Detector.Run(input))
                 {
-                    found.Add(new RotatedRect(
-                        new Point2f(rect.Center.X + tile.X + offsetX, rect.Center.Y + tile.Y + offsetY), rect.Size, rect.Angle));
+                    // kembalikan ke koordinat foto lewat potongan yang memuat titik tengahnya
+                    OcrPiece? piece = page.FirstOrDefault(p =>
+                        rect.Center.X >= p.X && rect.Center.X < p.X + p.Source.Width
+                        && rect.Center.Y >= p.Y && rect.Center.Y < p.Y + p.Source.Height);
+                    if (piece is not null)
+                    {
+                        found.Add(new RotatedRect(
+                            new Point2f(rect.Center.X - piece.X + piece.Source.X, rect.Center.Y - piece.Y + piece.Source.Y),
+                            rect.Size,
+                            rect.Angle));
+                    }
                 }
             }
 
-            // hanya teks yang titik tengahnya di dalam kardus, lalu buang duplikat dari tile yang tumpang tindih
+            TimeSpan detectTime = Stopwatch.GetElapsedTime(detectStart);
+            // hanya teks yang titik tengahnya di dalam area, lalu buang duplikat dari tile yang tumpang tindih
             List<(RotatedRect Rect, BoundingBox Box)> inside = [.. found
                 .Select(r => (Rect: r, Box: ToBox(r.BoundingRect())))
                 .Where(t => regions.Any(region => Contains(region, t.Box.CenterX, t.Box.CenterY)))];
             IReadOnlyList<int> kept = OcrTiling.Deduplicate([.. inside.Select(t => t.Box)], DuplicateContainment);
             if (kept.Count == 0)
             {
+                LogOcr(_logger, regions.Count, packing.PageCount, (long)waited.TotalMilliseconds, (long)detectTime.TotalMilliseconds, 0, 0);
                 return [];
             }
 
+            long recognizeStart = Stopwatch.GetTimestamp();
             // Potongan lurus (bounding rect), sama seperti PaddleOcrAll.Run dengan AllowRotateDetection=false.
             // GetRotateCropImage menghasilkan teks terbalik atas-bawah untuk sebagian kotak (5→2, 6→9).
             Mat[] crops = [.. kept.Select(i => source.Mat[inside[i].Rect.BoundingRect() & new Rect(0, 0, source.Width, source.Height)].Clone())];
@@ -106,6 +126,14 @@ public sealed class PaddleOcrTextReader : ISkuLabelReader, ITextSpotter, IDispos
                     }
                 }
 
+                LogOcr(
+                    _logger,
+                    regions.Count,
+                    packing.PageCount,
+                    (long)waited.TotalMilliseconds,
+                    (long)detectTime.TotalMilliseconds,
+                    (long)Stopwatch.GetElapsedTime(recognizeStart).TotalMilliseconds,
+                    texts.Count);
                 return texts;
             }
             finally
@@ -145,14 +173,28 @@ public sealed class PaddleOcrTextReader : ISkuLabelReader, ITextSpotter, IDispos
         }
     }
 
-    /// <summary>Tile tepi diberi padding sampai ukuran penuh supaya bentuk input detector selalu sama.</summary>
-    private static Mat PadTile(Mat crop, OcrTile tile)
+    /// <summary>Halaman putih <see cref="TileSize"/> × <see cref="TileSize"/> berisi potongan-potongan foto (ukuran input detector selalu sama).</summary>
+    private static Mat BuildPage(Mat source, IEnumerable<OcrPiece> pieces)
     {
-        using Mat roi = new(crop, new Rect(tile.X, tile.Y, tile.Width, tile.Height));
-        Mat padded = new();
-        Cv2.CopyMakeBorder(
-            roi, padded, 0, TileSize - tile.Height, 0, TileSize - tile.Width, BorderTypes.Constant, Scalar.All(255));
-        return padded;
+        Mat page = new(new Size(TileSize, TileSize), source.Type(), Scalar.All(255));
+        foreach (OcrPiece piece in pieces)
+        {
+            using Mat from = new(source, new Rect(piece.Source.X, piece.Source.Y, piece.Source.Width, piece.Source.Height));
+            using Mat to = new(page, new Rect(piece.X, piece.Y, piece.Source.Width, piece.Source.Height));
+            from.CopyTo(to);
+        }
+
+        return page;
+    }
+
+    /// <summary>Area + margin, dibatasi ke dalam foto.</summary>
+    private static OcrRect Clamp(BoundingBox region, int margin, int width, int height)
+    {
+        int x1 = Math.Clamp((int)Math.Floor(region.X1) - margin, 0, width);
+        int y1 = Math.Clamp((int)Math.Floor(region.Y1) - margin, 0, height);
+        int x2 = Math.Clamp((int)Math.Ceiling(region.X2) + margin, 0, width);
+        int y2 = Math.Clamp((int)Math.Ceiling(region.Y2) + margin, 0, height);
+        return new OcrRect(x1, y1, x2 - x1, y2 - y1);
     }
 
     private static Mat Shrink(Mat crop, int maxWidth)
@@ -172,6 +214,12 @@ public sealed class PaddleOcrTextReader : ISkuLabelReader, ITextSpotter, IDispos
 
     private static bool Contains(BoundingBox box, double x, double y) =>
         x >= box.X1 && x <= box.X2 && y >= box.Y1 && y <= box.Y2;
+
+    [LoggerMessage(
+        Level = Microsoft.Extensions.Logging.LogLevel.Information,
+        Message = "OCR label: {Regions} area → {Pages} halaman deteksi, antre {WaitMs} ms, deteksi {DetectMs} ms, pengenalan {RecognizeMs} ms, {Texts} teks")]
+    private static partial void LogOcr(
+        ILogger logger, int regions, int pages, long waitMs, long detectMs, long recognizeMs, int texts);
 
     public void Dispose()
     {
