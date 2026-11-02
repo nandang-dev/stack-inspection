@@ -64,6 +64,25 @@ public sealed class VisionOptions
     [Range(0, 480)]
     public int OcrTileOverlap { get; set; } = 320;
 
+    /// <summary>
+    /// Area OCR (area label + margin) yang lebih sempit dari ini (px) diperbesar sampai selebar ini sebelum deteksi
+    /// teks, maksimal <see cref="OcrMaxUpscale"/> kali. Angka label dus kecil di foto ±2000 px hanya ±8–13 px,
+    /// terlalu kecil untuk detektor teks. 0 = tidak diperbesar. Menambah jumlah halaman deteksi, bukan RAM.
+    /// </summary>
+    [Range(0, 960)]
+    public int OcrMinAreaWidth { get; set; } = 320;
+
+    /// <summary>Batas perbesaran area OCR (lihat <see cref="OcrMinAreaWidth"/>).</summary>
+    [Range(1.0, 4.0)]
+    public double OcrMaxUpscale { get; set; } = 3.0;
+
+    /// <summary>
+    /// Skor minimal kotak teks hasil deteksi (default PaddleOCR 0,7). Lebih rendah = teks samar/kecil ikut terbaca;
+    /// teks palsu tetap tersaring karena harus cocok dengan pola SKU/candidateSkus.
+    /// </summary>
+    [Range(0.1, 0.95)]
+    public double OcrBoxScoreThreshold { get; set; } = 0.5;
+
     [Range(0, 4)]
     public int FuzzyMaxDistance { get; set; } = 2;
 
@@ -95,13 +114,16 @@ public sealed class VisionOptions
     /// </summary>
     public string AppearanceModel { get; set; } = string.Empty;
 
-    /// <summary>Kemiripan tampilan (cosine) minimal ke kardus acuan.</summary>
+    /// <summary>
+    /// Kemiripan tampilan (cosine) minimal ke kardus acuan. Tuning case 01: kardus SKU &amp; desain sama 0,84–0,95,
+    /// SKU lain ≤ 0,75.
+    /// </summary>
     [Range(0.5, 1.0)]
-    public double AppearanceMinSimilarity { get; set; } = 0.95;
+    public double AppearanceMinSimilarity { get; set; } = 0.80;
 
     /// <summary>Jumlah kardus acuan ber-SKU sama yang harus lolos <see cref="AppearanceMinSimilarity"/>.</summary>
     [Range(1, 10)]
-    public int AppearanceMinReferences { get; set; } = 2;
+    public int AppearanceMinReferences { get; set; } = 1;
 
     /// <summary>Selisih kemiripan minimal antara SKU terbaik dan SKU lain.</summary>
     [Range(0.0, 0.5)]
