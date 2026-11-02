@@ -9,6 +9,10 @@ API untuk menilai kualitas tumpukan kardus di truk/kontainer dari sebuah foto (b
 2. `GET /api/v1/models` — daftar model deteksi yang tersedia (nama, input size, threshold, status, metrik).
 3. `POST /api/v1/stack-inspections/analyze` — hitung pelanggaran (`UNKNOWN_SKU`, `LABEL_NOT_VISIBLE`,
    `MAX_STACK_EXCEEDED`, `CLASS_POSITION_INVALID`) dan skor.
+4. `POST /api/v1/stack-inspections/preview` — Collect SKU + Analyze sekaligus, hasilnya **halaman HTML** simulasi
+   render susunan dus (grid seperti UI, posisi dus di foto + garis tumpuan, skor, pelanggaran, jalur tumpukan).
+   Form sama dengan Collect SKU ditambah `masterSkus` (JSON array, opsional; kosong = tanpa skor). Untuk QA/demo;
+   error tetap JSON (400/422).
 
 Swagger UI: `/swagger` (aktif jika `Swagger:Enabled = true`). Health check: `/health`.
 
