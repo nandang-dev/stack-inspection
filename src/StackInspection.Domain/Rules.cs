@@ -12,32 +12,55 @@ public enum ViolationType
 /// <summary>Pelanggaran pada satu sel.</summary>
 public sealed record Violation(ViolationType Type, DetectedCell Cell, string Message);
 
-/// <summary>Satu kolom tumpukan, sel diurutkan dari bawah ke atas.</summary>
-public sealed record StackColumn(int Column, IReadOnlyList<DetectedCell> BottomToTop);
-
-/// <summary>Data yang dibaca oleh semua aturan.</summary>
+/// <summary>Data yang dibaca oleh semua aturan. Satu <see cref="DetectedCell"/> = satu kardus (id unik).</summary>
 public sealed class StackEvaluationContext
 {
+    private readonly Dictionary<int, DetectedCell> _byId;
+
     public StackEvaluationContext(IReadOnlyList<DetectedCell> cells, IReadOnlyDictionary<string, MasterSku> master)
     {
         ArgumentNullException.ThrowIfNull(cells);
         Cells = cells;
         Master = master;
-        Columns = [.. cells
-            .GroupBy(c => c.Column)
-            .OrderBy(g => g.Key)
-            .Select(g => new StackColumn(g.Key, [.. g.OrderBy(c => c.Level)]))];
+        _byId = cells.ToDictionary(c => c.Id);
     }
 
     public IReadOnlyList<DetectedCell> Cells { get; }
 
     public IReadOnlyDictionary<string, MasterSku> Master { get; }
 
-    public IReadOnlyList<StackColumn> Columns { get; }
-
     /// <summary>Sel yang SKU-nya dikenal master (dievaluasi oleh aturan maxStack dan kelas).</summary>
     public bool IsEvaluable(DetectedCell cell) =>
         cell.ReadStatus != ReadStatus.LabelNotVisible && Master.ContainsKey(cell.Sku);
+
+    /// <summary>Kardus yang langsung ditumpu <paramref name="cell"/>.</summary>
+    public IEnumerable<DetectedCell> Supports(DetectedCell cell)
+    {
+        ArgumentNullException.ThrowIfNull(cell);
+        return cell.RestsOn.Select(id => _byId[id]);
+    }
+
+    /// <summary>Semua kardus di bawah <paramref name="cell"/> (menelusuri tumpuan sampai lantai), terdekat dulu.</summary>
+    public IEnumerable<DetectedCell> Below(DetectedCell cell)
+    {
+        ArgumentNullException.ThrowIfNull(cell);
+        HashSet<int> seen = [];
+        Queue<DetectedCell> queue = new(Supports(cell));
+        while (queue.Count > 0)
+        {
+            DetectedCell next = queue.Dequeue();
+            if (!seen.Add(next.Id))
+            {
+                continue;
+            }
+
+            yield return next;
+            foreach (DetectedCell support in Supports(next))
+            {
+                queue.Enqueue(support);
+            }
+        }
+    }
 }
 
 /// <summary>Satu aturan penilaian tumpukan.</summary>
@@ -76,62 +99,68 @@ public sealed class LabelNotVisibleRule : IStackRule
     }
 }
 
-/// <summary>Jumlah kardus SKU yang sama dalam satu kolom tidak boleh melebihi maxStack (kelebihan dihitung dari bawah).</summary>
+/// <summary>
+/// Jumlah kardus SKU yang sama dalam satu jalur tumpukan (bawah → atas mengikuti tumpuan) tidak boleh melebihi
+/// maxStack; kelebihan dihitung dari bawah. Kardus yang tidak bisa dievaluasi dilewati tanpa memutus jalur.
+/// </summary>
 public sealed class MaxStackRule : IStackRule
 {
     public IEnumerable<Violation> Evaluate(StackEvaluationContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
-        foreach (StackColumn column in context.Columns)
+        Dictionary<(int Id, string Sku), int> memo = [];
+
+        // jumlah terbanyak kardus SKU ini di satu jalur dari lantai sampai cell (termasuk cell)
+        int Count(DetectedCell cell, string sku)
         {
-            Dictionary<string, int> counts = [];
-            foreach (DetectedCell cell in column.BottomToTop.Where(context.IsEvaluable))
+            if (memo.TryGetValue((cell.Id, sku), out int cached))
             {
-                int count = counts.GetValueOrDefault(cell.Sku) + 1;
-                counts[cell.Sku] = count;
-                MasterSku master = context.Master[cell.Sku];
-                if (count > master.MaxStack)
-                {
-                    yield return new Violation(
-                        ViolationType.MaxStackExceeded,
-                        cell,
-                        $"SKU {cell.Sku} melebihi max_stack ({master.MaxStack}) pada kolom {cell.Column}");
-                }
+                return cached;
+            }
+
+            int self = context.IsEvaluable(cell) && cell.Sku == sku ? 1 : 0;
+            int below = context.Supports(cell).Select(s => Count(s, sku)).DefaultIfEmpty(0).Max();
+            memo[(cell.Id, sku)] = self + below;
+            return self + below;
+        }
+
+        foreach (DetectedCell cell in context.Cells.Where(context.IsEvaluable))
+        {
+            MasterSku master = context.Master[cell.Sku];
+            if (Count(cell, cell.Sku) > master.MaxStack)
+            {
+                yield return new Violation(
+                    ViolationType.MaxStackExceeded,
+                    cell,
+                    $"SKU {cell.Sku} melebihi max_stack ({master.MaxStack}) pada kolom {cell.Column}");
             }
         }
     }
 }
 
 /// <summary>
-/// Kelas A &lt; B &lt; C (C paling berat, harus di bawah). Kardus melanggar jika ada kardus mana pun
-/// di bawahnya dalam kolom yang sama dengan kelas lebih rendah. Sel tanpa SKU dikenal dilewati.
+/// Kelas A &lt; B &lt; C (C paling berat, harus di bawah). Kardus melanggar jika ada kardus mana pun di bawahnya
+/// (menelusuri tumpuan sampai lantai) dengan kelas lebih rendah; pesan menyebut yang terdekat. Sel tanpa SKU
+/// dikenal dilewati.
 /// </summary>
 public sealed class ClassPositionRule : IStackRule
 {
     public IEnumerable<Violation> Evaluate(StackEvaluationContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
-        foreach (StackColumn column in context.Columns)
+        foreach (DetectedCell cell in context.Cells.Where(context.IsEvaluable))
         {
-            List<DetectedCell> known = [.. column.BottomToTop.Where(context.IsEvaluable)];
-            for (int i = 0; i < known.Count; i++)
+            SkuClass cellClass = context.Master[cell.Sku].Class;
+            DetectedCell? below = context.Below(cell)
+                .Where(context.IsEvaluable)
+                .FirstOrDefault(b => context.Master[b.Sku].Class < cellClass);
+            if (below is not null)
             {
-                DetectedCell cell = known[i];
-                SkuClass cellClass = context.Master[cell.Sku].Class;
-                // pelanggar terdekat di bawahnya
-                for (int j = i - 1; j >= 0; j--)
-                {
-                    DetectedCell below = known[j];
-                    SkuClass belowClass = context.Master[below.Sku].Class;
-                    if (belowClass < cellClass)
-                    {
-                        yield return new Violation(
-                            ViolationType.ClassPositionInvalid,
-                            cell,
-                            $"Produk {cell.Sku} ({cellClass}) berada di atas produk {below.Sku} ({belowClass}) - kelas tidak sesuai");
-                        break;
-                    }
-                }
+                SkuClass belowClass = context.Master[below.Sku].Class;
+                yield return new Violation(
+                    ViolationType.ClassPositionInvalid,
+                    cell,
+                    $"Produk {cell.Sku} ({cellClass}) berada di atas produk {below.Sku} ({belowClass}) - kelas tidak sesuai");
             }
         }
     }
