@@ -86,7 +86,6 @@ public sealed partial class CollectSkuHandler
         long inspectMs = stopwatch.ElapsedMilliseconds;
 
         IReadOnlyList<CartonBox> detected = await _detector.DetectAsync(image, model, cancellationToken).ConfigureAwait(false);
-        long detectMs = stopwatch.ElapsedMilliseconds;
         IReadOnlyList<CartonBox> distinct = ContainmentFilter.Apply(detected, _vision.ContainmentThreshold);
         string? failedGate = DetectionGate.Check(
             distinct, image.Width, image.Height, _photo.MinCartonCount, _photo.MinCartonCoverage);
@@ -107,9 +106,11 @@ public sealed partial class CollectSkuHandler
                 "Tidak ada kardus yang terdeteksi di lapisan depan foto.");
         }
 
+        long filterMs = stopwatch.ElapsedMilliseconds;
         IReadOnlyList<OcrText> texts = await _reader
             .ReadAllAsync(image, [.. front.Kept.Select(c => c.Box)], cancellationToken)
             .ConfigureAwait(false);
+        long ocrMs = stopwatch.ElapsedMilliseconds;
         IReadOnlyList<SkuReading> readings = [.. front.Kept.Select(c => ReadSku(c.Box, texts, candidates))];
         bool majorityCorrected = false;
         if (candidates.Length == 0)
@@ -130,9 +131,16 @@ public sealed partial class CollectSkuHandler
         bool partialCorrected = completed.Where((r, i) => r != readings[i]).Any();
         readings = completed;
         readings = await InferByAppearanceAsync(image, front.Kept, readings, cancellationToken).ConfigureAwait(false);
-        long ocrMs = stopwatch.ElapsedMilliseconds;
+        long resolveMs = stopwatch.ElapsedMilliseconds;
         LogTimings(
-            _logger, decodeMs, inspectMs - decodeMs, detectMs - inspectMs, ocrMs - detectMs, front.Kept.Count, texts.Count);
+            _logger,
+            decodeMs,
+            inspectMs - decodeMs,
+            filterMs - inspectMs,
+            ocrMs - filterMs,
+            resolveMs - ocrMs,
+            front.Kept.Count,
+            texts.Count);
 
         GridLayout layout = GridBuilder.Build([.. front.Kept.Select(c => c.Box)]);
         List<CellDto> cells = [];
@@ -156,6 +164,10 @@ public sealed partial class CollectSkuHandler
         }
 
         cells = [.. cells.OrderBy(c => c.Row).ThenBy(c => c.Column)];
+        List<StackDto> stacks = BuildStacks(cells);
+        List<DistinctSkuDto> distinctSkus = BuildDistinct(cells);
+        List<string> warnings = BuildWarnings(front, layout, cells, majorityCorrected, partialCorrected);
+        long totalMs = stopwatch.ElapsedMilliseconds;
         return new CollectSkuResponse
         {
             InspectionId = Guid.NewGuid(),
@@ -166,10 +178,19 @@ public sealed partial class CollectSkuHandler
             ColumnCount = layout.ColumnCount,
             ExcludedBackLayerCount = front.ExcludedCount,
             Cells = cells,
-            Stacks = BuildStacks(cells),
-            DistinctSkus = BuildDistinct(cells),
-            Warnings = BuildWarnings(front, layout, cells, majorityCorrected, partialCorrected),
-            ProcessingTimeMs = stopwatch.ElapsedMilliseconds,
+            Stacks = stacks,
+            DistinctSkus = distinctSkus,
+            Warnings = warnings,
+            ProcessingTimeMs = totalMs,
+            Timings = new CollectSkuTimingsDto
+            {
+                DecodeMs = decodeMs,
+                InspectMs = inspectMs - decodeMs,
+                DetectMs = filterMs - inspectMs,
+                OcrMs = ocrMs - filterMs,
+                SkuResolveMs = resolveMs - ocrMs,
+                BuildMs = totalMs - resolveMs,
+            },
         };
     }
 
@@ -437,9 +458,9 @@ public sealed partial class CollectSkuHandler
 
     [LoggerMessage(
         Level = LogLevel.Information,
-        Message = "Collect SKU timing: decode {DecodeMs} ms, inspect {InspectMs} ms, detect {DetectMs} ms, ocr {OcrMs} ms ({Cartons} kardus, {Texts} teks)")]
+        Message = "Collect SKU timing: decode {DecodeMs} ms, inspect {InspectMs} ms, detect {DetectMs} ms, ocr {OcrMs} ms, sku {SkuResolveMs} ms ({Cartons} kardus, {Texts} teks)")]
     private static partial void LogTimings(
-        ILogger logger, long decodeMs, long inspectMs, long detectMs, long ocrMs, int cartons, int texts);
+        ILogger logger, long decodeMs, long inspectMs, long detectMs, long ocrMs, long skuResolveMs, int cartons, int texts);
 
     [LoggerMessage(
         Level = LogLevel.Information,

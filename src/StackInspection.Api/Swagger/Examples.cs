@@ -58,6 +58,15 @@ internal static class ExampleData
         ],
         Warnings = [CollectWarnings.LabelNotVisiblePresent, CollectWarnings.BackLayerExcluded],
         ProcessingTimeMs = 3120,
+        Timings = new CollectSkuTimingsDto
+        {
+            DecodeMs = 180,
+            InspectMs = 45,
+            DetectMs = 610,
+            OcrMs = 2190,
+            SkuResolveMs = 92,
+            BuildMs = 3,
+        },
     };
 }
 

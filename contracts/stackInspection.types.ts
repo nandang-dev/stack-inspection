@@ -85,6 +85,24 @@ export interface CollectSkuResponse {
   distinctSkus: DistinctSkuDto[];
   warnings: CollectWarning[];
   processingTimeMs: number;
+  /** Rincian waktu proses per tahap (ms); jumlahnya ≈ processingTimeMs. */
+  timings: CollectSkuTimingsDto;
+}
+
+/** Waktu eksekusi tiap tahap pipeline Collect SKU (ms). */
+export interface CollectSkuTimingsDto {
+  /** Validasi upload + decode gambar. */
+  decodeMs: number;
+  /** Photo gate: resolusi, fast-reject classifier, cek stempel kamera. */
+  inspectMs: number;
+  /** Deteksi kardus + filter kotak bersarang, gate hasil deteksi, filter lapisan depan. */
+  detectMs: number;
+  /** OCR semua kardus (termasuk menunggu giliran OCR request lain). */
+  ocrMs: number;
+  /** Fuzzy match, koreksi mayoritas, potongan nomor, inferensi tampilan. */
+  skuResolveMs: number;
+  /** Penyusunan grid, stack, dan ringkasan response. */
+  buildMs: number;
 }
 
 export interface MasterSkuDto {
