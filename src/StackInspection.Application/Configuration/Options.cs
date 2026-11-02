@@ -65,20 +65,19 @@ public sealed class VisionOptions
     public int OcrTileOverlap { get; set; } = 320;
 
     /// <summary>
-    /// OCR tahap 1b (baca ulang): kardus yang belum terbaca dari tahap 1 (resolusi asli) dibaca ulang dengan area
-    /// label selebar kardus, diperbesar sampai minimal selebar ini (px, maksimal <see cref="OcrMaxUpscale"/> kali)
-    /// dan ambang <see cref="OcrBoxScoreThreshold"/>. Angka label dus kecil di foto ±2000 px hanya ±8–13 px.
-    /// Kardus yang sudah terbaca tidak disentuh. 0 = tahap 1b mati. Menambah halaman deteksi, bukan RAM.
+    /// OCR tahap 1b (baca ulang berbagai ukuran): setelah tahap 1 (resolusi asli), kardus yang belum terbaca dibaca
+    /// ulang dengan setiap scan berurutan; scan berikutnya hanya untuk kardus yang masih belum terbaca. Kardus yang
+    /// sudah terbaca tidak disentuh. Kosong = tahap 1b mati. Menambah halaman deteksi, bukan RAM.
+    /// Isi default ada di appsettings.json (tidak di sini, agar binder konfigurasi tidak menggandakan daftar).
     /// </summary>
-    [Range(0, 960)]
-    public int OcrMinAreaWidth { get; set; } = 320;
+    public List<OcrScanOptions> OcrRetryScans { get; set; } = [];
 
-    /// <summary>Batas perbesaran area OCR (lihat <see cref="OcrMinAreaWidth"/>).</summary>
+    /// <summary>Batas perbesaran area OCR (lihat <see cref="OcrScanOptions.MinAreaWidth"/>).</summary>
     [Range(1.0, 4.0)]
     public double OcrMaxUpscale { get; set; } = 3.0;
 
     /// <summary>
-    /// Skor minimal kotak teks hasil deteksi pada tahap 1b (tahap 1 memakai default PaddleOCR 0,7). Lebih rendah =
+    /// Skor minimal kotak teks hasil deteksi pada scan tahap 1b (tahap 1 memakai default PaddleOCR 0,7). Lebih rendah =
     /// teks samar/kecil ikut terbaca; teks palsu tetap tersaring karena harus cocok dengan pola SKU/candidateSkus.
     /// </summary>
     [Range(0.1, 0.95)]
@@ -139,6 +138,25 @@ public sealed class VisionOptions
     /// </summary>
     [Range(0.0, 1.0)]
     public double ContainmentThreshold { get; set; } = 0.8;
+}
+
+/// <summary>Satu scan baca ulang OCR (lihat <see cref="VisionOptions.OcrRetryScans"/>).</summary>
+public sealed class OcrScanOptions
+{
+    /// <summary>Lebar area label (× lebar kardus) dari kiri-atas kardus.</summary>
+    [Range(0.1, 1.0)]
+    public double WidthRatio { get; set; } = 0.6;
+
+    /// <summary>Tinggi area label (× tinggi kardus) dari atas kardus.</summary>
+    [Range(0.1, 1.0)]
+    public double HeightRatio { get; set; } = 0.3;
+
+    /// <summary>
+    /// Area (+ margin) yang lebih sempit dari ini (px) diperbesar sampai selebar ini, maksimal
+    /// <see cref="VisionOptions.OcrMaxUpscale"/> kali. Angka label dus kecil di foto ±2000 px hanya ±8–13 px.
+    /// </summary>
+    [Range(0, 960)]
+    public int MinAreaWidth { get; set; } = 320;
 }
 
 /// <summary>Pemeriksaan kelayakan foto (section <c>Photo</c>).</summary>

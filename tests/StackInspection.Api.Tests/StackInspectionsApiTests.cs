@@ -9,7 +9,9 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using StackInspection.Application.Abstractions;
+using StackInspection.Application.Configuration;
 using StackInspection.Domain;
 using StackInspection.Infrastructure.Fakes;
 using StackInspection.Application.Contracts;
@@ -299,6 +301,16 @@ public sealed class StackInspectionsApiTests : IClassFixture<StackInspectionsApi
             await release.Task.WaitAsync(cancellationToken);
             return await inner.DetectAsync(image, model, cancellationToken);
         }
+    }
+
+    [Fact]
+    public void OcrRetryScans_FromAppsettings_AreBoundOnce()
+    {
+        VisionOptions vision = _factory.Services.GetRequiredService<IOptions<VisionOptions>>().Value;
+
+        Assert.Equal(
+            [(0.6, 0.3, 320), (1.0, 0.4, 480)],
+            vision.OcrRetryScans.Select(s => (s.WidthRatio, s.HeightRatio, s.MinAreaWidth)));
     }
 
     [Fact]

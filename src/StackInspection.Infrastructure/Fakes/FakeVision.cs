@@ -92,7 +92,7 @@ public sealed class FakeCartonDetector(FakeVisionFixtureProvider provider) : ICa
 public sealed class FakeSkuLabelReader(FakeVisionFixtureProvider provider) : ISkuLabelReader
 {
     public Task<IReadOnlyList<OcrText>> ReadAllAsync(
-        VisionImage image, IReadOnlyList<BoundingBox> regions, OcrMode mode, CancellationToken cancellationToken)
+        VisionImage image, IReadOnlyList<BoundingBox> regions, int minAreaWidth, CancellationToken cancellationToken)
     {
         List<OcrText> texts = [];
         foreach (FakeCarton carton in provider.Fixture.Cartons)

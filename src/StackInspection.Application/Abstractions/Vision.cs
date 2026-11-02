@@ -79,21 +79,15 @@ public sealed record OcrText(string Text, double Confidence, BoundingBox? Box = 
 /// </summary>
 public interface ISkuLabelReader
 {
+    /// <param name="image">Foto.</param>
+    /// <param name="regions">Area yang dibaca (koordinat foto).</param>
+    /// <param name="minAreaWidth">
+    /// 0 = resolusi asli dengan ambang default detektor. &gt; 0 = area yang lebih sempit dari ini (px) diperbesar
+    /// sampai selebar ini (maks Vision:OcrMaxUpscale kali) dengan ambang Vision:OcrBoxScoreThreshold.
+    /// </param>
+    /// <param name="cancellationToken">Token pembatalan.</param>
     Task<IReadOnlyList<OcrText>> ReadAllAsync(
-        VisionImage image, IReadOnlyList<BoundingBox> regions, OcrMode mode, CancellationToken cancellationToken);
-}
-
-/// <summary>Cara deteksi teks pada <see cref="ISkuLabelReader.ReadAllAsync"/>.</summary>
-public enum OcrMode
-{
-    /// <summary>Resolusi asli, ambang skor default detektor.</summary>
-    Native,
-
-    /// <summary>
-    /// Area sempit diperbesar dan ambang skor diturunkan (Vision:OcrMinAreaWidth, OcrMaxUpscale,
-    /// OcrBoxScoreThreshold). Dipakai ulang hanya untuk kardus yang belum terbaca.
-    /// </summary>
-    Enlarged,
+        VisionImage image, IReadOnlyList<BoundingBox> regions, int minAreaWidth, CancellationToken cancellationToken);
 }
 
 /// <summary>Mencari teks pada area foto (dipakai untuk mendeteksi stempel aplikasi kamera).</summary>
