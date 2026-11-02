@@ -67,7 +67,8 @@ tidak di-commit) cukup untuk development. Vision asli diuji di Linux (Docker) da
 | `Vision:ModelsDirectory` | `models` (Docker: `/app/models`) | Folder model **di luar repo**, satu subfolder per model |
 | `Vision:DefaultModel` | `carton-v1` | Model jika request tidak memilih `model` |
 | `Vision:InputSize` / `ConfidenceThreshold` / `IouThreshold` | 960 / 0.5 / 0.5 | Default jika `model-card.json` tidak mencantumkannya |
-| `Vision:Threads` | 4 | Thread ONNX Runtime dan PaddleOCR (samakan dengan jumlah vCPU) |
+| `Vision:Threads` | 4 | Thread ONNX Runtime dan PaddleOCR (maksimal jumlah vCPU; sisakan untuk aplikasi lain di server yang sama) |
+| `Vision:MaxConcurrentInspections` | 1 | Collect SKU/Preview yang diproses bersamaan; selebihnya langsung 429 `SERVER_BUSY` (+ `Retry-After`) |
 | `Vision:OcrFullCartonFallback` | `false` | OCR tahap 2: kardus yang SKU-nya tidak terbaca dari area label di-OCR ulang seluruh kardusnya. `false` = hanya area label (jauh lebih cepat; label di luar area kiri-atas tidak terbaca) |
 | `Vision:OcrTileOverlap` | `320` | Tumpang tindih tile OCR (px) untuk area yang lebih besar dari satu halaman deteksi 960 px |
 | `Vision:ContainmentThreshold` | 0.8 | Kotak yang ≥80% luasnya berada di dalam kotak lain dibuang sebagai duplikat (0 = nonaktif) |
