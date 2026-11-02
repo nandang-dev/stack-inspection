@@ -159,7 +159,8 @@ public sealed partial class CollectSkuHandler
                 [.. front.Kept.Select(c => DigitVariants(c.Box, texts))],
                 _vision.MajorityMinCount,
                 _vision.MajorityDominance,
-                _vision.MajorityMaxDistance);
+                _vision.MajorityMaxDistance,
+                _vision.MajorityMaxConfidence);
             majorityCorrected = corrected.Where((r, i) => r != readings[i]).Any();
             readings = corrected;
         }
@@ -168,7 +169,24 @@ public sealed partial class CollectSkuHandler
             readings, [.. front.Kept.Select(c => PartialDigits(c.Box, texts))], candidates, _vision.PartialReadMinDigits);
         bool partialCorrected = completed.Where((r, i) => r != readings[i]).Any();
         readings = completed;
-        readings = await InferByAppearanceAsync(image, front.Kept, readings, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<float[]> embeddings = await EmbedAsync(image, front.Kept, readings, cancellationToken).ConfigureAwait(false);
+        if (candidates.Length == 0 && embeddings.Count == readings.Count && _vision.MajorityAppearanceMaxDistance > _vision.MajorityMaxDistance)
+        {
+            // Salah baca lebih dari MajorityMaxDistance digit tetap dikoreksi jika tampilannya mirip kardus mayoritas.
+            IReadOnlyList<SkuReading> current = readings;
+            IReadOnlyList<SkuReading> corrected = MajorityCorrection.Apply(
+                current,
+                [.. front.Kept.Select(c => DigitVariants(c.Box, texts))],
+                _vision.MajorityMinCount,
+                _vision.MajorityDominance,
+                _vision.MajorityAppearanceMaxDistance,
+                _vision.MajorityMaxConfidence,
+                (i, sku) => AppearanceInference.BestSimilarity(current, embeddings, i, sku) >= _vision.AppearanceMinSimilarity);
+            majorityCorrected |= corrected.Where((r, i) => r != current[i]).Any();
+            readings = corrected;
+        }
+
+        readings = InferByAppearance(readings, embeddings);
         long resolveMs = stopwatch.ElapsedMilliseconds;
         LogTimings(
             _logger,
@@ -342,22 +360,32 @@ public sealed partial class CollectSkuHandler
             .Distinct(StringComparer.Ordinal)];
 
     /// <summary>
-    /// Kardus tanpa SKU terbaca diberi SKU kardus lain yang tampilannya sangat mirip (Vision:Appearance*).
-    /// Embedder hanya dipanggil jika aktif dan ada kardus terbaca maupun tidak terbaca.
+    /// Vektor tampilan semua kardus (Vision:AppearanceModel), dipakai koreksi mayoritas berdukungan tampilan dan
+    /// inferensi tampilan. Kosong jika embedder nonaktif, atau tidak ada kardus terbaca / yang perlu dibantu.
     /// </summary>
-    private async Task<IReadOnlyList<SkuReading>> InferByAppearanceAsync(
+    private async Task<IReadOnlyList<float[]>> EmbedAsync(
         VisionImage image, IReadOnlyList<CartonBox> cartons, IReadOnlyList<SkuReading> readings, CancellationToken cancellationToken)
     {
-        bool hasUnread = readings.Any(r => r.Status is ReadStatus.Unknown or ReadStatus.LabelNotVisible);
         bool hasRead = readings.Any(r => r.Status is ReadStatus.Matched or ReadStatus.Corrected);
-        if (string.IsNullOrWhiteSpace(_vision.AppearanceModel) || !hasUnread || !hasRead)
+        bool needsHelp = readings.Select(r => r.Sku).Distinct(StringComparer.Ordinal).Skip(1).Any()
+            || readings.Any(r => r.Status is ReadStatus.Unknown or ReadStatus.LabelNotVisible);
+        if (string.IsNullOrWhiteSpace(_vision.AppearanceModel) || !hasRead || !needsHelp)
+        {
+            return [];
+        }
+
+        return await _embedder.EmbedAsync(image, [.. cartons.Select(c => c.Box)], cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Kardus tanpa SKU terbaca diberi SKU kardus lain yang tampilannya sangat mirip (Vision:Appearance*).</summary>
+    private IReadOnlyList<SkuReading> InferByAppearance(IReadOnlyList<SkuReading> readings, IReadOnlyList<float[]> embeddings)
+    {
+        if (embeddings.Count != readings.Count
+            || !readings.Any(r => r.Status is ReadStatus.Unknown or ReadStatus.LabelNotVisible))
         {
             return readings;
         }
 
-        IReadOnlyList<float[]> embeddings = await _embedder
-            .EmbedAsync(image, [.. cartons.Select(c => c.Box)], cancellationToken)
-            .ConfigureAwait(false);
         IReadOnlyList<SkuReading> inferred = AppearanceInference.Apply(
             readings, embeddings, _vision.AppearanceMinSimilarity, _vision.AppearanceMinReferences, _vision.AppearanceMinMargin);
         LogAppearance(

@@ -125,11 +125,12 @@ public static class StackLayoutHtmlRenderer
                 .Append(";--sku:").Append(palette[c.Sku]).Append("\" title=\"").Append(E(Tooltip(tile, violations))).Append("\">")
                 .Append("<span class=\"sku\">").Append(E(ShortSku(c.Sku))).Append("</span>")
                 .Append("<span class=\"meta\">#").Append(tile.Id).Append(" · L").Append(c.Level).Append("</span>")
+                .Append(ConfidenceLabel(c) is { Length: > 0 } confidence ? $"<span class=\"conf\">{E(confidence)}</span>" : string.Empty)
                 .Append(violating ? "<span class=\"flag\" aria-label=\"melanggar\">!</span>" : string.Empty)
                 .Append("</div>");
         }
 
-        html.Append("</div><p class=\"muted\">Kotak = satu dus (id sama digabung). L = level fisik (0 = lantai). Arahkan kursor/ketuk untuk detail.</p></section>");
+        html.Append("</div><p class=\"muted\">Kotak = satu dus (id sama digabung). L = level fisik (0 = lantai). Persen = keyakinan OCR; ✎ = SKU dikoreksi; ≈ = ditebak dari kemiripan tampilan. Arahkan kursor/ketuk untuk detail.</p></section>");
     }
 
     private static void AppendPhoto(
@@ -241,6 +242,12 @@ public static class StackLayoutHtmlRenderer
         StringBuilder text = new();
         text.Append('#').Append(tile.Id).Append(" · SKU ").Append(c.Sku).Append(" (").Append(c.ReadStatus).Append(')')
             .Append("\nOCR: ").Append(c.OcrText ?? "-")
+            .Append(c.ReadStatus switch
+            {
+                ReadStatus.InferredByAppearance => $"\nKemiripan tampilan {Percent(c.OcrConfidence)} (bukan hasil baca label)",
+                ReadStatus.LabelNotVisible => string.Empty,
+                _ => $"\nKeyakinan OCR {Percent(c.OcrConfidence)}",
+            })
             .Append("\nLevel ").Append(c.Level).Append(" · menumpu: ")
             .Append(c.RestsOn is { Count: > 0 } r ? string.Join(", ", r.Select(i => "#" + i.ToString(Invariant))) : "lantai");
         foreach (ViolationDto v in violations.GetValueOrDefault(tile.Id) ?? [])
@@ -250,6 +257,17 @@ public static class StackLayoutHtmlRenderer
 
         return text.ToString();
     }
+
+    /// <summary>Label keyakinan di tile: "87%", "✎ 87%" (dikoreksi), "≈91%" (kemiripan tampilan), kosong jika tidak terbaca.</summary>
+    private static string ConfidenceLabel(CellDto cell) => cell.ReadStatus switch
+    {
+        ReadStatus.LabelNotVisible => string.Empty,
+        ReadStatus.InferredByAppearance => "≈" + Percent(cell.OcrConfidence),
+        ReadStatus.Corrected => "✎ " + Percent(cell.OcrConfidence),
+        _ => Percent(cell.OcrConfidence),
+    };
+
+    private static string Percent(double value) => string.Create(Invariant, $"{Math.Clamp(value, 0, 1) * 100:0}%");
 
     private static bool IsUnread(CellDto cell) => cell.ReadStatus is ReadStatus.Unknown or ReadStatus.LabelNotVisible;
 
@@ -308,6 +326,7 @@ public static class StackLayoutHtmlRenderer
           container-type:size;font-size:11px}
         .tile .sku{font-weight:700;white-space:nowrap;font-size:clamp(7px,16cqw,13px)}
         .tile .meta{opacity:.75;white-space:nowrap;font-size:clamp(6px,12cqw,10px)}
+        .tile .conf{opacity:.85;white-space:nowrap;font-size:clamp(6px,12cqw,10px);font-weight:600}
         .tile.unread{background:repeating-linear-gradient(45deg,#bbb 0 6px,#ddd 6px 12px)}
         .tile.violation{outline:3px solid var(--bad);outline-offset:-3px}
         .flag{position:absolute;top:2px;right:4px;color:var(--bad);font-weight:800}

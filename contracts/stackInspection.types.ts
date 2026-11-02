@@ -63,6 +63,10 @@ export interface CellDto {
   /** Kode SKU 8 digit, atau 'UNKNOWN' / 'LABEL_NOT_VISIBLE'. */
   sku: string;
   ocrText: string | null;
+  /**
+   * Keyakinan OCR 0–1. Pada readStatus 'InferredByAppearance' berisi kemiripan tampilan (0–1) ke kardus acuan,
+   * karena SKU-nya tidak dibaca dari label.
+   */
   ocrConfidence: number;
   detectionConfidence: number;
   readStatus: ReadStatus;
