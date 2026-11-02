@@ -56,10 +56,17 @@ internal sealed class StubReader(Dictionary<BoundingBox, (string? Label, string?
 
     public IReadOnlyList<BoundingBox> LastRegions { get; private set; } = [];
 
-    public Task<IReadOnlyList<OcrText>> ReadAllAsync(VisionImage image, IReadOnlyList<BoundingBox> regions, CancellationToken cancellationToken)
+    public List<OcrMode> Modes { get; } = [];
+
+    /// <summary>Teks yang hanya terbaca pada <see cref="OcrMode.Enlarged"/> (angka kecil), posisinya seperti label.</summary>
+    public Dictionary<BoundingBox, string> EnlargedOnly { get; } = [];
+
+    public Task<IReadOnlyList<OcrText>> ReadAllAsync(
+        VisionImage image, IReadOnlyList<BoundingBox> regions, OcrMode mode, CancellationToken cancellationToken)
     {
         Calls++;
         LastRegions = regions;
+        Modes.Add(mode);
         List<OcrText> result = [];
         foreach ((BoundingBox box, (string? label, string? whole)) in texts)
         {
@@ -72,6 +79,11 @@ internal sealed class StubReader(Dictionary<BoundingBox, (string? Label, string?
             {
                 result.Add(new OcrText(whole, 0.9, new BoundingBox(box.X1 + 50, box.Y2 - 60, box.X2 - 50, box.Y2 - 20)));
             }
+        }
+
+        if (mode == OcrMode.Enlarged)
+        {
+            result.AddRange(EnlargedOnly.Select(e => new OcrText(e.Value, 0.9, new BoundingBox(e.Key.X1 + 10, e.Key.Y1 + 10, e.Key.X1 + 110, e.Key.Y1 + 40))));
         }
 
         // seperti OCR asli: hanya teks yang titik tengahnya di dalam area yang diminta
@@ -114,7 +126,8 @@ internal static class Build
         int minCartonCount = 0,
         double minCartonCoverage = 0,
         ICartonEmbedder? embedder = null,
-        bool ocrFullCartonFallback = false)
+        bool ocrFullCartonFallback = false,
+        int ocrMinAreaWidth = 0)
     {
         // gate fast reject dimatikan secara default supaya grid kecil di test lain tidak tertolak
         IOptions<PhotoOptions> photo = Options.Create(new PhotoOptions
@@ -139,6 +152,7 @@ internal static class Build
             {
                 AppearanceModel = embedder is null ? string.Empty : "carton-embed-v1",
                 OcrFullCartonFallback = ocrFullCartonFallback,
+                OcrMinAreaWidth = ocrMinAreaWidth,
             }),
             Options.Create(new FrontLayerOptions()),
             Options.Create(new UploadOptions { MaxFileSizeMb = maxFileMb }),

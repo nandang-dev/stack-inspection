@@ -65,9 +65,10 @@ public sealed class VisionOptions
     public int OcrTileOverlap { get; set; } = 320;
 
     /// <summary>
-    /// Area OCR (area label + margin) yang lebih sempit dari ini (px) diperbesar sampai selebar ini sebelum deteksi
-    /// teks, maksimal <see cref="OcrMaxUpscale"/> kali. Angka label dus kecil di foto ±2000 px hanya ±8–13 px,
-    /// terlalu kecil untuk detektor teks. 0 = tidak diperbesar. Menambah jumlah halaman deteksi, bukan RAM.
+    /// OCR tahap 1b (baca ulang): kardus yang belum terbaca dari tahap 1 (resolusi asli) dibaca ulang dengan area
+    /// label selebar kardus, diperbesar sampai minimal selebar ini (px, maksimal <see cref="OcrMaxUpscale"/> kali)
+    /// dan ambang <see cref="OcrBoxScoreThreshold"/>. Angka label dus kecil di foto ±2000 px hanya ±8–13 px.
+    /// Kardus yang sudah terbaca tidak disentuh. 0 = tahap 1b mati. Menambah halaman deteksi, bukan RAM.
     /// </summary>
     [Range(0, 960)]
     public int OcrMinAreaWidth { get; set; } = 320;
@@ -77,8 +78,8 @@ public sealed class VisionOptions
     public double OcrMaxUpscale { get; set; } = 3.0;
 
     /// <summary>
-    /// Skor minimal kotak teks hasil deteksi (default PaddleOCR 0,7). Lebih rendah = teks samar/kecil ikut terbaca;
-    /// teks palsu tetap tersaring karena harus cocok dengan pola SKU/candidateSkus.
+    /// Skor minimal kotak teks hasil deteksi pada tahap 1b (tahap 1 memakai default PaddleOCR 0,7). Lebih rendah =
+    /// teks samar/kecil ikut terbaca; teks palsu tetap tersaring karena harus cocok dengan pola SKU/candidateSkus.
     /// </summary>
     [Range(0.1, 0.95)]
     public double OcrBoxScoreThreshold { get; set; } = 0.5;

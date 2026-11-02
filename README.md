@@ -71,9 +71,9 @@ tidak di-commit) cukup untuk development. Vision asli diuji di Linux (Docker) da
 | `Vision:MaxConcurrentInspections` | 1 | Collect SKU/Preview yang diproses bersamaan; selebihnya langsung 429 `SERVER_BUSY` (+ `Retry-After`) |
 | `Vision:OcrFullCartonFallback` | `false` | OCR tahap 2: kardus yang SKU-nya tidak terbaca dari area label di-OCR ulang seluruh kardusnya. `false` = hanya area label (jauh lebih cepat; label di luar area kiri-atas tidak terbaca) |
 | `Vision:OcrTileOverlap` | `320` | Tumpang tindih tile OCR (px) untuk area yang lebih besar dari satu halaman deteksi 960 px |
-| `Vision:OcrMinAreaWidth` | `320` | Area label yang lebih sempit dari ini (px) diperbesar sebelum deteksi teks (label dus kecil/foto resolusi rendah); 0 = mati |
+| `Vision:OcrMinAreaWidth` | `320` | OCR tahap 1b: kardus yang belum terbaca di tahap 1 (resolusi asli) dibaca ulang dengan area label selebar kardus, diperbesar sampai minimal selebar ini (px). Kardus yang sudah terbaca tidak disentuh. 0 = mati |
 | `Vision:OcrMaxUpscale` | `3.0` | Batas perbesaran area label |
-| `Vision:OcrBoxScoreThreshold` | `0.5` | Skor minimal kotak teks hasil deteksi (default PaddleOCR 0,7); lebih rendah = lebih sensitif |
+| `Vision:OcrBoxScoreThreshold` | `0.5` | Skor minimal kotak teks hasil deteksi pada tahap 1b (tahap 1 tetap default PaddleOCR 0,7); lebih rendah = lebih sensitif |
 | `Vision:ContainmentThreshold` | 0.8 | Kotak yang ≥80% luasnya berada di dalam kotak lain dibuang sebagai duplikat (0 = nonaktif) |
 | `Vision:MajorityMinCount` / `MajorityDominance` / `MajorityMaxDistance` | 3 / 3 / 1 | Hanya jika `candidateSkus` kosong: hasil baca yang selisih ≤1 digit dari SKU yang muncul ≥3× dan ≥3× lebih sering dikoreksi ke SKU itu (`Corrected`, warning `SKU_CORRECTED_BY_MAJORITY`). `MajorityMinCount` 0 = nonaktif |
 | `Photo:MinLongSide` / `MinMegapixels` | 2048 / 2.0 | Gate resolusi: sisi terpanjang (px) **dan** jumlah piksel (MP) minimal. `MinMegapixels` 0 = tidak dicek |

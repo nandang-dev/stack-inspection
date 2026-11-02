@@ -112,18 +112,34 @@ public sealed partial class CollectSkuHandler
             .ReadAllAsync(
                 image,
                 [.. front.Kept.Select(c => LabelRegion(c.Box, _vision.LabelCropWidthRatio, _vision.LabelCropHeightRatio))],
+                OcrMode.Native,
                 cancellationToken)
             .ConfigureAwait(false);
         IReadOnlyList<SkuReading> readings = [.. front.Kept.Select(c => ReadSku(c.Box, texts, candidates))];
+        if (_vision.OcrMinAreaWidth > 0)
+        {
+            // OCR tahap 1b: kardus yang belum terbaca dibaca ulang, area label selebar kardus dan diperbesar
+            // (angka kecil/terpotong batas area). Kardus yang sudah terbaca tidak disentuh.
+            BoundingBox[] unread = [.. front.Kept
+                .Where((_, i) => readings[i].Status is not (ReadStatus.Matched or ReadStatus.Corrected))
+                .Select(c => LabelRegion(c.Box, 1.0, _vision.LabelCropHeightRatio))];
+            if (unread.Length > 0)
+            {
+                IReadOnlyList<OcrText> more = await _reader.ReadAllAsync(image, unread, OcrMode.Enlarged, cancellationToken).ConfigureAwait(false);
+                texts = [.. texts, .. more];
+                readings = [.. front.Kept.Select(c => ReadSku(c.Box, texts, candidates))];
+            }
+        }
+
         if (_vision.OcrFullCartonFallback)
         {
-            // OCR tahap 2: seluruh kardus, hanya untuk kardus yang belum terbaca dari area label
+            // OCR tahap 2 (opsional): seluruh kardus, hanya untuk kardus yang belum terbaca dari area label
             BoundingBox[] unread = [.. front.Kept
                 .Where((_, i) => readings[i].Status is not (ReadStatus.Matched or ReadStatus.Corrected))
                 .Select(c => c.Box)];
             if (unread.Length > 0)
             {
-                IReadOnlyList<OcrText> more = await _reader.ReadAllAsync(image, unread, cancellationToken).ConfigureAwait(false);
+                IReadOnlyList<OcrText> more = await _reader.ReadAllAsync(image, unread, OcrMode.Native, cancellationToken).ConfigureAwait(false);
                 texts = [.. texts, .. more];
                 readings = [.. front.Kept.Select(c => ReadSku(c.Box, texts, candidates))];
             }

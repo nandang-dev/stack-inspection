@@ -1,3 +1,4 @@
+using StackInspection.Application.Abstractions;
 using StackInspection.Application.CollectSku;
 using StackInspection.Application.Contracts;
 using StackInspection.Application.Exceptions;
@@ -205,6 +206,36 @@ public class CollectSkuHandlerTests
         Assert.Equal(2, reader.Calls);
         Assert.Equal(textElsewhere.Box, Assert.Single(reader.LastRegions)); // tahap 2 hanya kardus yang belum terbaca
         Assert.All(result.Cells, c => Assert.Equal(ReadStatus.Matched, c.ReadStatus));
+    }
+
+    [Fact]
+    public async Task OcrEnlargedRetry_OnlyForUnreadCartons_WithFullWidthLabelArea()
+    {
+        CartonBox labelled = Build.Carton(300, 600);
+        CartonBox smallText = Build.Carton(710, 600);
+        StubReader reader = new(new Dictionary<BoundingBox, (string?, string?)> { [labelled.Box] = ("68410975", null) });
+        reader.EnlargedOnly[smallText.Box] = "68582213"; // angka kecil: hanya terdeteksi setelah diperbesar
+        CollectSkuHandler handler = Build.Handler(
+            new StubDecoder(3000, 4000), new StubDetector([labelled, smallText]), reader, ocrMinAreaWidth: 320);
+
+        CollectSkuResponse result = await handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, ["68410975", "68582213"]), None);
+
+        Assert.Equal([OcrMode.Native, OcrMode.Enlarged], reader.Modes);
+        // baca ulang hanya kardus yang belum terbaca: selebar kardus × 30 % tinggi
+        Assert.Equal(new BoundingBox(710, 600, 1110, 690), Assert.Single(reader.LastRegions));
+        Assert.All(result.Cells, c => Assert.Equal(ReadStatus.Matched, c.ReadStatus));
+    }
+
+    [Fact]
+    public async Task OcrEnlargedRetry_SkippedWhenAllCartonsRead()
+    {
+        CartonBox labelled = Build.Carton(300, 600);
+        StubReader reader = new(new Dictionary<BoundingBox, (string?, string?)> { [labelled.Box] = ("68410975", null) });
+        CollectSkuHandler handler = Build.Handler(new StubDecoder(3000, 4000), new StubDetector([labelled]), reader, ocrMinAreaWidth: 320);
+
+        await handler.HandleAsync(new CollectSkuCommand(Build.Jpeg, ["68410975"]), None);
+
+        Assert.Equal([OcrMode.Native], reader.Modes);
     }
 
     [Fact]
