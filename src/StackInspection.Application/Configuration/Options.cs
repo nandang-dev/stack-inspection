@@ -46,6 +46,17 @@ public sealed class VisionOptions
     [Range(0.1, 1.0)]
     public double LabelCropHeightRatio { get; set; } = 0.3;
 
+    /// <summary>
+    /// OCR tahap 2: kardus yang SKU-nya tidak terbaca dari area label (tahap 1) di-OCR ulang seluruh kardusnya.
+    /// false (default) = hanya area label (<see cref="LabelCropWidthRatio"/> × <see cref="LabelCropHeightRatio"/>
+    /// kiri-atas), jauh lebih cepat tetapi label di luar area itu tidak terbaca.
+    /// </summary>
+    public bool OcrFullCartonFallback { get; set; }
+
+    /// <summary>Tumpang tindih tile OCR (px) untuk area yang lebih besar dari satu halaman deteksi 960 px.</summary>
+    [Range(0, 480)]
+    public int OcrTileOverlap { get; set; } = 320;
+
     [Range(0, 4)]
     public int FuzzyMaxDistance { get; set; } = 2;
 

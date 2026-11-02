@@ -162,7 +162,10 @@ public sealed class CollectSkuTimingsDto
     /// <summary>Deteksi kardus + filter kotak bersarang, gate hasil deteksi, dan filter lapisan depan.</summary>
     public long DetectMs { get; init; }
 
-    /// <summary>OCR semua kardus (termasuk menunggu giliran jika OCR sedang dipakai request lain).</summary>
+    /// <summary>
+    /// OCR area label semua kardus (+ tahap 2 seluruh kardus jika <c>Vision:OcrFullCartonFallback</c> aktif),
+    /// termasuk menunggu giliran jika OCR sedang dipakai request lain.
+    /// </summary>
     public long OcrMs { get; init; }
 
     /// <summary>Pencocokan SKU: fuzzy match, koreksi mayoritas, potongan nomor, dan inferensi tampilan.</summary>
