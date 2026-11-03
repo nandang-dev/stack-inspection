@@ -216,6 +216,7 @@ internal sealed class StackPreviewFromResultRequestExample : IExamplesProvider<S
     {
         CollectResult = ExampleData.CompleteCollect(),
         MasterSkus = new AnalyzeStackRequestExample().GetExamples().MasterSkus,
+        TokenUsage = new TokenUsageDto { InputTokens = 2140, OutputTokens = 1870 },
     };
 }
 

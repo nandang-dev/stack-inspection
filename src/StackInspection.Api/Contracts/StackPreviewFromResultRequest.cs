@@ -15,4 +15,10 @@ public sealed class StackPreviewFromResultRequest
     /// susunan dus.
     /// </summary>
     public IReadOnlyList<MasterSkuDto>? MasterSkus { get; init; }
+
+    /// <summary>
+    /// Pemakaian token LLM (opsional). Jika diisi, halaman menampilkan token input, output, dan totalnya untuk
+    /// dibandingkan dengan waktu proses.
+    /// </summary>
+    public TokenUsageDto? TokenUsage { get; init; }
 }

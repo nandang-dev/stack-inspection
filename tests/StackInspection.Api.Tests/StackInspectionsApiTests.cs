@@ -114,6 +114,51 @@ public sealed class StackInspectionsApiTests : IClassFixture<StackInspectionsApi
         Assert.Contains($"{collect!.InspectionId:N}", response.Content.Headers.ContentDisposition?.FileName, StringComparison.Ordinal);
         Assert.Contains("41.67%", html, StringComparison.Ordinal);
         Assert.Equal(48, html.Split("class=\"tile").Length - 1);
+        Assert.DoesNotContain("Total token", html, StringComparison.Ordinal); // tokenUsage tidak diisi
+    }
+
+    [Fact]
+    public async Task PreviewFromResult_WithTokenUsage_ShowsInputOutputAndTotal()
+    {
+        using HttpClient client = _factory.CreateClient();
+        using HttpResponseMessage collectResponse = await client.PostAsync("/api/v1/stack-inspections/collect-sku", Upload(Jpeg));
+        CollectSkuResponse? collect = await collectResponse.Content.ReadFromJsonAsync<CollectSkuResponse>(Json);
+
+        using HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/v1/stack-inspections/preview-from-result",
+            new StackPreviewFromResultRequest
+            {
+                CollectResult = collect,
+                TokenUsage = new TokenUsageDto { InputTokens = 2140, OutputTokens = 31870 },
+            },
+            Json);
+        string html = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("<dt>Token input</dt><dd>2,140</dd>", html, StringComparison.Ordinal);
+        Assert.Contains("<dt>Token output</dt><dd>31,870</dd>", html, StringComparison.Ordinal);
+        Assert.Contains("<dt>Total token</dt><dd>34,010</dd>", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PreviewFromResult_NegativeTokens_Returns400()
+    {
+        using HttpClient client = _factory.CreateClient();
+        using HttpResponseMessage collectResponse = await client.PostAsync("/api/v1/stack-inspections/collect-sku", Upload(Jpeg));
+        CollectSkuResponse? collect = await collectResponse.Content.ReadFromJsonAsync<CollectSkuResponse>(Json);
+
+        using HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/v1/stack-inspections/preview-from-result",
+            new StackPreviewFromResultRequest
+            {
+                CollectResult = collect,
+                TokenUsage = new TokenUsageDto { InputTokens = -1, OutputTokens = 10 },
+            },
+            Json);
+        string json = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("InputTokens", json, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
