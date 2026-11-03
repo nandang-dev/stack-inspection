@@ -35,7 +35,9 @@ builder.Services.AddCors(options => options.AddDefaultPolicy(policy =>
         policy.WithOrigins(corsOrigins);
     }
 
-    policy.AllowAnyHeader().AllowAnyMethod();
+    // Content-Disposition harus di-expose agar klien lintas origin (UI/Swagger di domain lain) bisa membaca
+    // lampiran Preview; tanpa ini header disembunyikan browser dan HTML tampil sebagai teks, bukan unduhan.
+    policy.AllowAnyHeader().AllowAnyMethod().WithExposedHeaders("Content-Disposition");
 }));
 
 builder.Services.AddProblemDetails();
