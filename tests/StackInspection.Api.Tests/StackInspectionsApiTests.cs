@@ -130,6 +130,20 @@ public sealed class StackInspectionsApiTests : IClassFixture<StackInspectionsApi
     }
 
     [Fact]
+    public async Task Preview_CrossOrigin_ExposesContentDisposition()
+    {
+        using HttpClient client = _factory.CreateClient();
+        using HttpRequestMessage request = new(HttpMethod.Post, "/api/v1/stack-inspections/preview") { Content = Upload(Jpeg) };
+        request.Headers.Add("Origin", "https://ui.example.com");
+
+        using HttpResponseMessage response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(response.Headers.TryGetValues("Access-Control-Expose-Headers", out IEnumerable<string>? exposed));
+        Assert.Contains("Content-Disposition", string.Join(',', exposed!), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task Preview_InvalidMasterSkusJson_Returns400()
     {
         using HttpClient client = _factory.CreateClient();
