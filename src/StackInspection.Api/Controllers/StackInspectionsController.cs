@@ -158,7 +158,8 @@ public sealed class StackInspectionsController : ControllerBase
     /// <remarks>
     /// Untuk memvalidasi hasil dari sumber lain dengan skema <c>CollectSkuResponse</c> yang sama, misalnya output
     /// LLM pada benchmark (<c>brief/PROMPT-benchmark-llm-vs-api.md</c>). Body = <c>collectResult</c> (response
-    /// Collect SKU apa adanya) dan <c>masterSkus</c> opsional. Tidak ada proses vision, sehingga cepat dan tidak
+    /// Collect SKU apa adanya), <c>masterSkus</c> opsional, dan <c>tokenUsage</c> opsional (token input/output
+    /// LLM; halaman menampilkan keduanya beserta totalnya). Tidak ada proses vision, sehingga cepat dan tidak
     /// dibatasi antrean inspeksi.
     /// <br/>Validasi lebih ketat dari Analyze karena hasilnya bukan dari Collect SKU: <c>imageWidth</c>/
     /// <c>imageHeight</c>/<c>rowCount</c>/<c>columnCount</c> &gt; 0, setiap sel di dalam grid, satu sel hanya berisi
@@ -169,15 +170,16 @@ public sealed class StackInspectionsController : ControllerBase
     /// <b>Download file</b> pada hasil Execute lalu buka file <c>.html</c>-nya di browser. Panel foto hanya
     /// menampilkan kotak dus (foto asli tidak dikirim).
     /// </remarks>
-    /// <param name="request">Hasil Collect SKU dan master SKU (opsional).</param>
+    /// <param name="request">Hasil Collect SKU, master SKU (opsional), dan pemakaian token LLM (opsional).</param>
     /// <response code="200">
     /// Halaman HTML mandiri (<c>text/html; charset=utf-8</c>, lampiran <c>stack-preview-{inspectionId}.html</c>),
     /// sama seperti endpoint Preview. Jika <c>masterSkus</c> diisi, halaman menampilkan skor dan pelanggaran
-    /// Analyze; jika kosong, hanya susunan dus.
+    /// Analyze; jika kosong, hanya susunan dus. Jika <c>tokenUsage</c> diisi, ringkasan menampilkan Token input,
+    /// Token output, dan Total token (input + output).
     /// </response>
     /// <response code="400">
     /// Body bukan JSON valid atau tidak sesuai skema (mis. <c>readStatus</c> tidak dikenal), <c>collectResult</c>
-    /// kosong/tidak konsisten (lihat aturan di atas), atau <c>masterSkus</c> tidak valid.
+    /// kosong/tidak konsisten (lihat aturan di atas), <c>masterSkus</c> tidak valid, atau token bernilai negatif.
     /// </response>
     [HttpPost("preview-from-result")]
     [Consumes("application/json")]
@@ -193,17 +195,17 @@ public sealed class StackInspectionsController : ControllerBase
         AnalyzeStackResponse? analyze = request.MasterSkus is not { Count: > 0 } masters
             ? null
             : _analyze.Handle(new AnalyzeStackRequest { CollectResult = collect, MasterSkus = masters });
-        return HtmlAttachment(collect, analyze);
+        return HtmlAttachment(collect, analyze, request.TokenUsage);
     }
 
-    private ContentResult HtmlAttachment(CollectSkuResponse collect, AnalyzeStackResponse? analyze)
+    private ContentResult HtmlAttachment(CollectSkuResponse collect, AnalyzeStackResponse? analyze, TokenUsageDto? tokenUsage = null)
     {
         // attachment: Swagger UI menampilkan tombol "Download file" (HTML tidak dirender di Swagger)
         Response.Headers.ContentDisposition = new ContentDispositionHeaderValue("attachment")
         {
             FileName = $"stack-preview-{collect.InspectionId:N}.html",
         }.ToString();
-        return Content(StackLayoutHtmlRenderer.Render(collect, analyze), "text/html; charset=utf-8");
+        return Content(StackLayoutHtmlRenderer.Render(collect, analyze, tokenUsage), "text/html; charset=utf-8");
     }
 
     private static List<MasterSkuDto> ParseMasterSkus(string? json)

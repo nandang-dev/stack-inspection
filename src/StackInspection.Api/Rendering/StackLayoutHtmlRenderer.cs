@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Text;
+using StackInspection.Api.Contracts;
 using StackInspection.Application.Contracts;
 using StackInspection.Domain;
 
@@ -17,8 +18,11 @@ public static class StackLayoutHtmlRenderer
 
     private sealed record Tile(int Id, int Row, int Column, int RowSpan, int ColumnSpan, CellDto Cell);
 
-    /// <summary>Membuat halaman HTML; <paramref name="analyze"/> <c>null</c> = tanpa skor dan pelanggaran.</summary>
-    public static string Render(CollectSkuResponse collect, AnalyzeStackResponse? analyze)
+    /// <summary>
+    /// Membuat halaman HTML; <paramref name="analyze"/> <c>null</c> = tanpa skor dan pelanggaran,
+    /// <paramref name="tokenUsage"/> <c>null</c> = tanpa ringkasan token LLM.
+    /// </summary>
+    public static string Render(CollectSkuResponse collect, AnalyzeStackResponse? analyze, TokenUsageDto? tokenUsage = null)
     {
         ArgumentNullException.ThrowIfNull(collect);
         List<Tile> tiles = [.. collect.Cells
@@ -40,7 +44,7 @@ public static class StackLayoutHtmlRenderer
         html.Append("<!doctype html><html lang=\"id\"><head><meta charset=\"utf-8\">")
             .Append("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">")
             .Append("<title>Simulasi Susunan Dus</title><style>").Append(Css).Append("</style></head><body><main>");
-        AppendSummary(html, collect, analyze, tiles.Count);
+        AppendSummary(html, collect, analyze, tokenUsage, tiles.Count);
         html.Append("<div class=\"panels\">");
         AppendGrid(html, collect, tiles, violations, palette);
         AppendPhoto(html, collect, tiles, violations, palette);
@@ -56,7 +60,8 @@ public static class StackLayoutHtmlRenderer
         return html.ToString();
     }
 
-    private static void AppendSummary(StringBuilder html, CollectSkuResponse collect, AnalyzeStackResponse? analyze, int cartons)
+    private static void AppendSummary(
+        StringBuilder html, CollectSkuResponse collect, AnalyzeStackResponse? analyze, TokenUsageDto? tokenUsage, int cartons)
     {
         html.Append("<header><div><h1>Simulasi Susunan Dus</h1><p class=\"muted\">Inspeksi ")
             .Append(E(collect.InspectionId.ToString())).Append(" · model ").Append(E(collect.Model))
@@ -79,6 +84,13 @@ public static class StackLayoutHtmlRenderer
         }
 
         Stat(html, "Waktu proses", $"{collect.ProcessingTimeMs.ToString("N0", Invariant)} ms");
+        if (tokenUsage is not null)
+        {
+            Stat(html, "Token input", tokenUsage.InputTokens.ToString("N0", Invariant));
+            Stat(html, "Token output", tokenUsage.OutputTokens.ToString("N0", Invariant));
+            Stat(html, "Total token", tokenUsage.TotalTokens.ToString("N0", Invariant));
+        }
+
         html.Append("</dl>");
         if (collect.Warnings.Count > 0)
         {
