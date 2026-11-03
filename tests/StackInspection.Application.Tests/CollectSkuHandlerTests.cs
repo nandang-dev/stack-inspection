@@ -40,7 +40,11 @@ public class CollectSkuHandlerTests
         Assert.All(result.Cells, c => Assert.Equal(("68140913", ReadStatus.Matched), (c.Sku, c.ReadStatus)));
         DistinctSkuDto distinct = Assert.Single(result.DistinctSkus);
         Assert.Equal(6, distinct.Count);
-        Assert.Equal([0, 1, 2], result.Stacks[0].SkusBottomToTop.Select((_, i) => i));
+        Assert.Equal([0, 1, 2], result.Stacks[0].Cartons.Select(c => c.Level));
+        // objek kardus di stacks = entri cells yang sama
+        Assert.Equal(
+            result.Cells.Where(c => c.Column == result.Stacks[0].Column).OrderByDescending(c => c.Row),
+            result.Stacks[0].Cartons);
         Assert.Empty(result.Warnings);
     }
 
@@ -83,7 +87,7 @@ public class CollectSkuHandlerTests
         Assert.All(top, c => Assert.Equal(bottomIds.Order(), c.RestsOn!));
         Assert.Equal([("68140913", 2), ("68410975", 1)], result.DistinctSkus.Select(d => (d.Sku, d.Count)));
         Assert.Equal(2, result.Stacks.Count);
-        Assert.All(result.Stacks, s => Assert.Equal(top[0].Id, s.CartonIdsBottomToTop[^1]));
+        Assert.All(result.Stacks, s => Assert.Same(top[0], s.Cartons[^1]));
         Assert.Contains(CollectWarnings.IrregularGrid, result.Warnings);
     }
 

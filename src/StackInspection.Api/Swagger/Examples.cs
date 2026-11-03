@@ -10,6 +10,12 @@ internal static class ExampleData
 {
     public static readonly Guid InspectionId = Guid.Parse("3f6c1c1e-8a0b-4d1f-9b7e-2a4b5c6d7e8f");
 
+    /// <summary>id kardus jalur contoh Collect SKU, bawah → atas.</summary>
+    public static readonly int[] CollectPathIds = [42, 35, 28, 21, 14, 7, 0];
+
+    /// <summary>id kardus jalur contoh Analyze, bawah → atas.</summary>
+    public static readonly int[] AnalyzePathIds = [42, 36, 30, 24, 18, 12, 6, 0];
+
     public static CollectSkuResponse Collect() => new()
     {
         InspectionId = InspectionId,
@@ -54,8 +60,26 @@ internal static class ExampleData
                 Path = 0,
                 Column = 0,
                 Height = 7,
-                CartonIdsBottomToTop = [42, 35, 28, 21, 14, 7, 0],
-                SkusBottomToTop = ["68140913", "68140913", "68140913", "68140913", "68140913", "68140913", "68140913"],
+                Cartons =
+                [
+                    .. CollectPathIds.Select((id, level) => new CellDto
+                    {
+                        Id = id,
+                        Row = CollectPathIds.Length - 1 - level,
+                        Column = 0,
+                        Level = level,
+                        RestsOn = level == 0 ? [] : [CollectPathIds[level - 1]],
+                        Sku = "68140913",
+                        OcrText = "68140913",
+                        OcrConfidence = 0.98,
+                        DetectionConfidence = 0.94,
+                        ReadStatus = ReadStatus.Matched,
+                        BoundingBox = new BoundingBoxDto
+                        {
+                            X1 = 160, Y1 = 1776 - ((level + 1) * 186), X2 = 430, Y2 = 1776 - (level * 186),
+                        },
+                    }),
+                ],
             },
         ],
         DistinctSkus =
@@ -144,7 +168,37 @@ internal sealed class AnalyzeStackResponseExample : IExamplesProvider<AnalyzeSta
         [
             new SkuSummaryDto { Sku = "68140913", Name = "SariWangi Teh Asli 48 x TB30 x 1.85g", Class = "A", Count = 21, ViolationCount = 1 },
         ],
-        Stacks = [new StackSummaryDto { Path = 0, Column = 0, Height = 8, CartonIdsBottomToTop = [42, 36, 30, 24, 18, 12, 6, 0], ViolationCount = 1 }],
+        Stacks =
+        [
+            new StackSummaryDto
+            {
+                Path = 0,
+                Column = 0,
+                Height = 8,
+                Cartons =
+                [
+                    .. ExampleData.AnalyzePathIds.Select((id, level) => new StackSummaryCartonDto
+                    {
+                        Id = id,
+                        Row = ExampleData.AnalyzePathIds.Length - 1 - level,
+                        Column = 0,
+                        Level = level,
+                        RestsOn = level == 0 ? [] : [ExampleData.AnalyzePathIds[level - 1]],
+                        Sku = "68140913",
+                        OcrText = "68140913",
+                        OcrConfidence = 0.98,
+                        DetectionConfidence = 0.94,
+                        ReadStatus = ReadStatus.Matched,
+                        BoundingBox = new BoundingBoxDto
+                        {
+                            X1 = 160, Y1 = 1776 - ((level + 1) * 186), X2 = 430, Y2 = 1776 - (level * 186),
+                        },
+                        Violations = level == 7 ? [ViolationCodes.MaxStackExceeded] : [],
+                    }),
+                ],
+                ViolationCount = 1,
+            },
+        ],
     };
 }
 

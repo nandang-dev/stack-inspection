@@ -90,11 +90,21 @@ public sealed class StackSummaryDto
     /// <summary>Jumlah kardus di jalur.</summary>
     public int Height { get; init; }
 
-    /// <summary><c>id</c> kardus dari paling bawah ke paling atas.</summary>
-    public IReadOnlyList<int> CartonIdsBottomToTop { get; init; } = [];
+    /// <summary>Kardus di jalur ini, urut dari paling bawah ke paling atas.</summary>
+    public IReadOnlyList<StackSummaryCartonDto> Cartons { get; init; } = [];
 
     /// <summary>Jumlah kardus yang melanggar di jalur ini.</summary>
     public int ViolationCount { get; init; }
+}
+
+/// <summary>
+/// Satu kardus di jalur tumpukan hasil Analyze: data kardus yang sama dengan <c>cells</c> Collect SKU (sel kiri-atas)
+/// ditambah pelanggarannya.
+/// </summary>
+public sealed class StackSummaryCartonDto : CellDto
+{
+    /// <summary>Jenis pelanggaran kardus ini (kosong = tidak melanggar), urut menaik.</summary>
+    public IReadOnlyList<string> Violations { get; init; } = [];
 }
 
 /// <summary>Hasil endpoint Analyze.</summary>

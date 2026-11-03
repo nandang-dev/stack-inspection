@@ -228,8 +228,8 @@ public static class StackLayoutHtmlRenderer
         html.Append("<section class=\"panel wide\"><h2>Jalur tumpukan (bawah → atas)</h2><ol class=\"paths\">");
         foreach (StackDto stack in collect.Stacks)
         {
-            html.Append("<li data-path=\"").Append(string.Join(' ', stack.CartonIdsBottomToTop)).Append("\">")
-                .Append(string.Join(" → ", stack.CartonIdsBottomToTop.Select(id => "#" + id.ToString(Invariant))))
+            html.Append("<li data-path=\"").Append(string.Join(' ', stack.Cartons.Select(c => c.Id!.Value))).Append("\">")
+                .Append(string.Join(" → ", stack.Cartons.Select(c => "#" + c.Id!.Value.ToString(Invariant))))
                 .Append(" <span class=\"muted\">(").Append(stack.Height).Append(" dus)</span></li>");
         }
 

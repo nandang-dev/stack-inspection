@@ -80,8 +80,11 @@ export interface StackDto {
   /** Kolom grid tampilan kardus paling bawah di jalur ini. */
   column: number;
   height: number;
-  cartonIdsBottomToTop: number[];
-  skusBottomToTop: string[];
+  /**
+   * Kardus di jalur, urut paling bawah → paling atas. Isinya sama dengan entri cells ber-id sama
+   * (kardus yang menempati beberapa sel diwakili sel kiri-atasnya).
+   */
+  cartons: CellDto[];
 }
 
 export interface DistinctSkuDto {
@@ -169,8 +172,15 @@ export interface StackSummaryDto {
   /** Kolom grid tampilan kardus paling bawah di jalur ini. */
   column: number;
   height: number;
-  cartonIdsBottomToTop: number[];
+  /** Kardus di jalur, urut paling bawah → paling atas. */
+  cartons: StackSummaryCartonDto[];
   violationCount: number;
+}
+
+/** Satu kardus di jalur tumpukan hasil Analyze: data kardus seperti cells Collect SKU + pelanggarannya. */
+export interface StackSummaryCartonDto extends CellDto {
+  /** Jenis pelanggaran kardus ini (kosong = tidak melanggar). */
+  violations: ViolationType[];
 }
 
 export interface AnalyzeStackResponse {
