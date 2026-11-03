@@ -72,16 +72,7 @@ public sealed class AnalyzeStackHandler
     {
         ArgumentNullException.ThrowIfNull(request);
         Dictionary<string, List<string>> errors = [];
-        void Add(string field, string message)
-        {
-            if (!errors.TryGetValue(field, out List<string>? list))
-            {
-                list = [];
-                errors[field] = list;
-            }
-
-            list.Add(message);
-        }
+        void Add(string field, string message) => AddError(errors, field, message);
 
         Dictionary<string, MasterSku> master = new(StringComparer.Ordinal);
         if (request.MasterSkus.Count == 0)
@@ -117,14 +108,110 @@ public sealed class AnalyzeStackHandler
             }
         }
 
-        IReadOnlyList<CellDto> cellDtos = request.CollectResult?.Cells ?? [];
+        List<DetectedCell> cells = ValidateCells(request.CollectResult, errors);
+        if (errors.Count > 0)
+        {
+            throw new RequestValidationException(errors.ToDictionary(e => e.Key, e => e.Value.ToArray()));
+        }
+
+        return (cells, master);
+    }
+
+    /// <summary>
+    /// Validasi hasil Collect SKU dari luar (mis. LLM) untuk Preview tanpa foto (400). Aturan <c>cells</c> sama
+    /// dengan Analyze, ditambah hal yang selalu dijamin Collect SKU: ukuran foto dan grid, sel di dalam grid, satu
+    /// kardus per sel, kotak di dalam foto, dan <c>level</c> = 1 + level tertinggi di <c>restsOn</c>.
+    /// </summary>
+    public static void ValidateCollectResult(CollectSkuResponse? collect)
+    {
+        if (collect is null)
+        {
+            throw new RequestValidationException("collectResult", "collectResult wajib diisi.");
+        }
+
+        Dictionary<string, List<string>> errors = [];
+        if (collect.ImageWidth <= 0 || collect.ImageHeight <= 0)
+        {
+            AddError(errors, "collectResult.imageWidth", "imageWidth dan imageHeight harus lebih dari 0.");
+        }
+
+        if (collect.RowCount <= 0 || collect.ColumnCount <= 0)
+        {
+            AddError(errors, "collectResult.rowCount", "rowCount dan columnCount harus lebih dari 0.");
+        }
+
+        List<DetectedCell> cartons = ValidateCells(collect, errors);
+        Dictionary<(int Row, int Column), int> owners = [];
+        for (int i = 0; i < collect.Cells.Count; i++)
+        {
+            CellDto c = collect.Cells[i];
+            int id = c.Id!.Value;
+            string field = $"collectResult.cells[{i}]";
+            if (c.Row < 0 || c.Row >= collect.RowCount || c.Column < 0 || c.Column >= collect.ColumnCount)
+            {
+                AddError(errors, field, $"Sel id {id} row {c.Row} column {c.Column} di luar grid {collect.RowCount} x {collect.ColumnCount}.");
+            }
+
+            if (owners.TryGetValue((c.Row, c.Column), out int other) && other != id)
+            {
+                AddError(errors, field, $"Sel row {c.Row} column {c.Column} berisi dua kardus (id {other} dan {id}).");
+            }
+            else
+            {
+                owners[(c.Row, c.Column)] = id;
+            }
+        }
+
+        Dictionary<int, DetectedCell> byId = cartons.ToDictionary(c => c.Id);
+        foreach (DetectedCell carton in cartons)
+        {
+            BoundingBox box = carton.Box;
+            if (box.X1 >= box.X2 || box.Y1 >= box.Y2 || box.X1 < 0 || box.Y1 < 0
+                || box.X2 > collect.ImageWidth || box.Y2 > collect.ImageHeight)
+            {
+                AddError(
+                    errors,
+                    "collectResult.cells",
+                    $"boundingBox kardus id {carton.Id} tidak valid atau di luar foto {collect.ImageWidth} x {collect.ImageHeight}.");
+            }
+
+            List<int> supports = [.. carton.RestsOn.Where(byId.ContainsKey)];
+            if (supports.Count != carton.RestsOn.Count)
+            {
+                continue; // restsOn ke id yang tidak ada sudah dilaporkan ValidateCells
+            }
+
+            int expected = supports.Count == 0 ? 0 : 1 + supports.Max(id => byId[id].Level);
+            if (carton.Level != expected)
+            {
+                AddError(
+                    errors,
+                    "collectResult.cells",
+                    $"level kardus id {carton.Id} = {carton.Level}, seharusnya {expected} (0 jika restsOn kosong, selain itu 1 + level tertinggi di restsOn).");
+            }
+        }
+
+        if (errors.Count > 0)
+        {
+            throw new RequestValidationException(errors.ToDictionary(e => e.Key, e => e.Value.ToArray()));
+        }
+    }
+
+    /// <summary>
+    /// Validasi <c>cells</c>: satu <see cref="DetectedCell"/> per id kardus, row/column = sel kiri-atasnya. Cells kosong
+    /// atau versi lama langsung dilempar (bersama error yang sudah terkumpul); error lain ditambahkan ke <paramref name="errors"/>.
+    /// </summary>
+    private static List<DetectedCell> ValidateCells(CollectSkuResponse? collect, Dictionary<string, List<string>> errors)
+    {
+        IReadOnlyList<CellDto> cellDtos = collect?.Cells ?? [];
         if (cellDtos.Count == 0)
         {
-            Add("collectResult.cells", "cells tidak boleh kosong.");
+            AddError(errors, "collectResult.cells", "cells tidak boleh kosong.");
         }
         else if (cellDtos.Any(c => c.Id is null || c.RestsOn is null))
         {
-            Add(
+            AddError(
+                errors,
                 "collectResult.cells",
                 "collectResult berasal dari Collect SKU versi lama (cell tanpa id/restsOn). Jalankan ulang Collect SKU.");
         }
@@ -144,7 +231,7 @@ public sealed class AnalyzeStackHandler
             int id = c.Id!.Value;
             if (!positions.Add((id, c.Row, c.Column)))
             {
-                Add($"collectResult.cells[{i}]", $"Sel id {id} row {c.Row} column {c.Column} duplikat.");
+                AddError(errors, $"collectResult.cells[{i}]", $"Sel id {id} row {c.Row} column {c.Column} duplikat.");
                 continue;
             }
 
@@ -156,7 +243,7 @@ public sealed class AnalyzeStackHandler
 
             if (!SameCarton(carton.First, c))
             {
-                Add($"collectResult.cells[{i}]", $"Data kardus id {id} tidak sama di semua selnya.");
+                AddError(errors, $"collectResult.cells[{i}]", $"Data kardus id {id} tidak sama di semua selnya.");
             }
 
             cartons[id] = (carton.First, Math.Min(carton.Row, c.Row), Math.Min(carton.Column, c.Column));
@@ -168,7 +255,7 @@ public sealed class AnalyzeStackHandler
             {
                 if (!cartons.TryGetValue(below, out (CellDto First, int Row, int Column) support) || support.First.Level >= c.Level)
                 {
-                    Add("collectResult.cells", $"restsOn kardus id {id} merujuk id {below} yang tidak ada atau tidak berada di bawahnya.");
+                    AddError(errors, "collectResult.cells", $"restsOn kardus id {id} merujuk id {below} yang tidak ada atau tidak berada di bawahnya.");
                 }
             }
 
@@ -177,12 +264,18 @@ public sealed class AnalyzeStackHandler
                 row, column, c.Level, c.Sku, c.OcrText, c.OcrConfidence, c.DetectionConfidence, c.ReadStatus, box, id, [.. c.RestsOn!]));
         }
 
-        if (errors.Count > 0)
+        return cells;
+    }
+
+    private static void AddError(Dictionary<string, List<string>> errors, string field, string message)
+    {
+        if (!errors.TryGetValue(field, out List<string>? list))
         {
-            throw new RequestValidationException(errors.ToDictionary(e => e.Key, e => e.Value.ToArray()));
+            list = [];
+            errors[field] = list;
         }
 
-        return (cells, master);
+        list.Add(message);
     }
 
     private static StackSummaryCartonDto ToStackCarton(DetectedCell cell, IEnumerable<string> violations) => new()

@@ -144,6 +144,26 @@ export interface AnalyzeStackRequest {
   masterSkus: MasterSkuDto[];
 }
 
+/** Pemakaian token LLM (salin dari field usage respons LLM). */
+export interface TokenUsageDto {
+  /** Token input (prompt + gambar), ≥ 0. */
+  inputTokens: number;
+  /** Token output, ≥ 0. */
+  outputTokens: number;
+  /** inputTokens + outputTokens; dihitung server, diabaikan jika dikirim. */
+  totalTokens?: number;
+}
+
+/** Body POST /api/v1/stack-inspections/preview-from-result (response: HTML lampiran). */
+export interface StackPreviewFromResultRequest {
+  /** Response Collect SKU (atau output LLM berskema sama) apa adanya. */
+  collectResult: CollectSkuResponse;
+  /** Opsional: diisi = skor & pelanggaran ditampilkan. */
+  masterSkus?: MasterSkuDto[] | null;
+  /** Opsional: diisi = token input, output, dan total ditampilkan. */
+  tokenUsage?: TokenUsageDto | null;
+}
+
 export interface ViolationDto {
   type: ViolationType;
   /** id kardus yang melanggar → sorot semua cells dengan id ini. */
