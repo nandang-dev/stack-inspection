@@ -213,4 +213,62 @@ public class AnalyzeStackHandlerTests
 
         Assert.Contains(field, error.Errors.Keys);
     }
+
+    /// <summary>Grid referensi 8 x 6 dengan ukuran foto dan grid lengkap, seperti response Collect SKU.</summary>
+    private static CollectSkuResponse PreviewCollect(Func<CellDto, CellDto>? edit = null, int imageWidth = 600, int rowCount = 8)
+    {
+        CollectSkuResponse collect = ReferenceCollect();
+        return new CollectSkuResponse
+        {
+            InspectionId = collect.InspectionId,
+            ImageWidth = imageWidth,
+            ImageHeight = 640,
+            RowCount = rowCount,
+            ColumnCount = 6,
+            Cells = [.. collect.Cells.Select(edit ?? (c => c))],
+        };
+    }
+
+    private static CellDto With(CellDto c, int? row = null, int? level = null, BoundingBoxDto? box = null) => new()
+    {
+        Id = c.Id,
+        Row = row ?? c.Row,
+        Column = c.Column,
+        Level = level ?? c.Level,
+        RestsOn = c.RestsOn,
+        Sku = c.Sku,
+        ReadStatus = c.ReadStatus,
+        BoundingBox = box ?? c.BoundingBox,
+    };
+
+    [Fact]
+    public void ValidateCollectResult_ConsistentResult_Passes()
+    {
+        AnalyzeStackHandler.ValidateCollectResult(PreviewCollect());
+    }
+
+    public static TheoryData<string, string, CollectSkuResponse?> InvalidPreviewResults() => new()
+    {
+        { "collectResult", "wajib diisi", null },
+        { "collectResult.imageWidth", "imageWidth dan imageHeight", PreviewCollect(imageWidth: 0) },
+        { "collectResult.rowCount", "rowCount dan columnCount", PreviewCollect(rowCount: 0) },
+        { "collectResult.cells[0]", "di luar grid", PreviewCollect(c => c.Id == 0 ? With(c, row: 8) : c) },
+        { "collectResult.cells[42]", "berisi dua kardus", PreviewCollect(c => c.Id == 42 ? With(c, row: 6) : c) },
+        { "collectResult.cells", "seharusnya 7", PreviewCollect(c => c.Id == 0 ? With(c, level: 9) : c) },
+        {
+            "collectResult.cells",
+            "di luar foto",
+            PreviewCollect(c => c.Id == 5 ? With(c, box: new BoundingBoxDto { X1 = 500, Y1 = 0, X2 = 700, Y2 = 75 }) : c)
+        },
+    };
+
+    [Theory]
+    [MemberData(nameof(InvalidPreviewResults))]
+    public void ValidateCollectResult_InconsistentResult_IsRejected(string field, string message, CollectSkuResponse? collect)
+    {
+        RequestValidationException error = Assert.Throws<RequestValidationException>(
+            () => AnalyzeStackHandler.ValidateCollectResult(collect));
+
+        Assert.Contains(error.Errors[field], m => m.Contains(message, StringComparison.Ordinal));
+    }
 }

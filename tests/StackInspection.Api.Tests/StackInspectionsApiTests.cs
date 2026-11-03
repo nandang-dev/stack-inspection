@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using StackInspection.Api.Contracts;
 using StackInspection.Application.Abstractions;
 using StackInspection.Application.Configuration;
 using StackInspection.Domain;
@@ -91,6 +92,63 @@ public sealed class StackInspectionsApiTests : IClassFixture<StackInspectionsApi
         Assert.NotNull(analyze);
         Assert.Equal((20, 48, 41.67), (analyze.TotalScore, analyze.MaxPossibleScore, analyze.PercentageScore));
         Assert.Equal(collect.InspectionId, analyze.InspectionId);
+    }
+
+    [Fact]
+    public async Task PreviewFromResult_CollectResponse_ReturnsSameHtmlAsPreview()
+    {
+        using HttpClient client = _factory.CreateClient();
+        using HttpResponseMessage collectResponse = await client.PostAsync(
+            "/api/v1/stack-inspections/collect-sku", Upload(Jpeg, "68410975", "68582213", "68140913"));
+        CollectSkuResponse? collect = await collectResponse.Content.ReadFromJsonAsync<CollectSkuResponse>(Json);
+
+        using HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/v1/stack-inspections/preview-from-result",
+            new StackPreviewFromResultRequest { CollectResult = collect, MasterSkus = Master },
+            Json);
+        string html = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("text/html", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal("attachment", response.Content.Headers.ContentDisposition?.DispositionType);
+        Assert.Contains($"{collect!.InspectionId:N}", response.Content.Headers.ContentDisposition?.FileName, StringComparison.Ordinal);
+        Assert.Contains("41.67%", html, StringComparison.Ordinal);
+        Assert.Equal(48, html.Split("class=\"tile").Length - 1);
+    }
+
+    [Fact]
+    public async Task PreviewFromResult_SwaggerExample_IsAccepted()
+    {
+        using HttpClient client = _factory.CreateClient();
+        using JsonDocument swagger = JsonDocument.Parse(await client.GetStringAsync("/swagger/v1/swagger.json"));
+        JsonElement example = swagger.RootElement
+            .GetProperty("paths").GetProperty("/api/v1/stack-inspections/preview-from-result").GetProperty("post")
+            .GetProperty("requestBody").GetProperty("content").GetProperty("application/json").GetProperty("example");
+
+        using StringContent body = new(example.GetRawText(), System.Text.Encoding.UTF8, "application/json");
+        using HttpResponseMessage response = await client.PostAsync("/api/v1/stack-inspections/preview-from-result", body);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task PreviewFromResult_InconsistentResult_Returns400WithAllErrors()
+    {
+        using HttpClient client = _factory.CreateClient();
+        const string body = """
+            {"collectResult":{"imageWidth":0,"imageHeight":0,"rowCount":1,"columnCount":1,"cells":[
+              {"id":0,"row":0,"column":0,"level":3,"restsOn":[],"sku":"68140913","readStatus":"Matched",
+               "boundingBox":{"x1":0,"y1":0,"x2":10,"y2":10}}]}}
+            """;
+
+        using StringContent content = new(body, System.Text.Encoding.UTF8, "application/json");
+        using HttpResponseMessage response = await client.PostAsync("/api/v1/stack-inspections/preview-from-result", content);
+        string json = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+        Assert.Contains("imageWidth dan imageHeight", json, StringComparison.Ordinal);
+        Assert.Contains("seharusnya 0", json, StringComparison.Ordinal);
     }
 
     [Fact]
