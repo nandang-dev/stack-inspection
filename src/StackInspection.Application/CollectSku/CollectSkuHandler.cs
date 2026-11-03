@@ -236,13 +236,14 @@ public sealed partial class CollectSkuHandler
         }
 
         cells = [.. cells.OrderBy(c => c.Row).ThenBy(c => c.Column).ThenBy(c => c.Id)];
+        // sel kiri-atas mewakili kardus di stacks (cells sudah urut row lalu column)
+        Dictionary<int, CellDto> cartonCells = cells.GroupBy(c => c.Id!.Value).ToDictionary(g => g.Key, g => g.First());
         List<StackDto> stacks = [.. layout.Paths.BottomToTop.Select((path, p) => new StackDto
         {
             Path = p,
             Column = layout.Cartons[path[0]].Cells.Min(c => c.Column),
             Height = path.Count,
-            CartonIdsBottomToTop = [.. path.Select(i => ids[i])],
-            SkusBottomToTop = [.. path.Select(i => readings[i].Sku)],
+            Cartons = [.. path.Select(i => cartonCells[ids[i]])],
         })];
         List<DistinctSkuDto> distinctSkus = BuildDistinct(cells);
         List<string> warnings = BuildWarnings(front, layout, cells, majorityCorrected, partialCorrected);

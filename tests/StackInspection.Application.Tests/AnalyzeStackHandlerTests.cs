@@ -66,7 +66,7 @@ public class AnalyzeStackHandlerTests
         {
             InspectionId = collect.InspectionId,
             Cells = collect.Cells,
-            Stacks = [new StackDto { Column = 0, Height = 1, SkusBottomToTop = ["68582213"] }],
+            Stacks = [new StackDto { Column = 0, Height = 1, Cartons = [new CellDto { Id = 0, Sku = "68582213" }] }],
         };
 
         AnalyzeStackResponse result = Handler.Handle(new AnalyzeStackRequest { CollectResult = tampered, MasterSkus = Master });
@@ -77,12 +77,24 @@ public class AnalyzeStackHandlerTests
     [Fact]
     public void ReferenceGrid_ViolationsPointToCartonIdAndStacksArePaths()
     {
-        AnalyzeStackResponse result = Handler.Handle(new AnalyzeStackRequest { CollectResult = ReferenceCollect(), MasterSkus = Master });
+        CollectSkuResponse collect = ReferenceCollect();
+        CellDto collectTop(int? id) => collect.Cells.Where(c => c.Id == id).OrderBy(c => c.Row).ThenBy(c => c.Column).First();
+        AnalyzeStackResponse result = Handler.Handle(new AnalyzeStackRequest { CollectResult = collect, MasterSkus = Master });
 
         ViolationDto maxStack = result.Violations.Single(v => v.Type == ViolationCodes.MaxStackExceeded);
         Assert.Equal((0, 0, 0), (maxStack.CartonId, maxStack.Row, maxStack.Column));
         Assert.Equal(6, result.Stacks.Count);
-        Assert.Equal([42, 36, 30, 24, 18, 12, 6, 0], result.Stacks[0].CartonIdsBottomToTop);
+        Assert.Equal([42, 36, 30, 24, 18, 12, 6, 0], result.Stacks[0].Cartons.Select(c => c.Id));
+        Assert.Equal([0, 1, 2, 3, 4, 5, 6, 7], result.Stacks[0].Cartons.Select(c => c.Level));
+        Assert.Contains(ViolationCodes.MaxStackExceeded, result.Stacks[0].Cartons[^1].Violations);
+        CellDto top = collectTop(result.Stacks[0].Cartons[^1].Id);
+        StackSummaryCartonDto carton = result.Stacks[0].Cartons[^1];
+        Assert.Equal(
+            (top.Row, top.Column, top.Sku, top.OcrText, top.OcrConfidence, top.ReadStatus, top.BoundingBox.X1, top.BoundingBox.Y2),
+            (carton.Row, carton.Column, carton.Sku, carton.OcrText, carton.OcrConfidence, carton.ReadStatus, carton.BoundingBox.X1, carton.BoundingBox.Y2));
+        Assert.All(
+            result.Stacks.SelectMany(s => s.Cartons),
+            c => Assert.Equal(result.Violations.Where(v => v.CartonId == c.Id).Select(v => v.Type).Distinct().Order(), c.Violations));
         Assert.Equal([0, 1, 2, 3, 4, 5], result.Stacks.Select(s => s.Path));
     }
 
@@ -104,7 +116,7 @@ public class AnalyzeStackHandlerTests
 
         Assert.Equal((2, 2), (result.TotalScore, result.MaxPossibleScore));
         Assert.Equal([1, 1], result.SkuSummary.Select(s => s.Count));
-        Assert.Equal([0, 1], Assert.Single(result.Stacks).CartonIdsBottomToTop);
+        Assert.Equal([0, 1], Assert.Single(result.Stacks).Cartons.Select(c => c.Id));
     }
 
     [Fact]
