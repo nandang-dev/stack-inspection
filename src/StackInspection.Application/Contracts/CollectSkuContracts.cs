@@ -22,7 +22,7 @@ public sealed class BoundingBoxDto
 /// Satu sel grid tampilan yang ditempati kardus lapisan depan. Kardus besar/lebar menempati beberapa sel dan
 /// muncul beberapa kali dengan isi dan <c>id</c> yang sama.
 /// </summary>
-public sealed class CellDto
+public class CellDto
 {
     /// <summary>
     /// ID kardus (0..N-1, urut dari kiri-atas). Entri dengan <c>id</c> sama = kardus yang sama.
@@ -85,11 +85,11 @@ public sealed class StackDto
     /// <summary>Jumlah kardus di jalur.</summary>
     public int Height { get; init; }
 
-    /// <summary><c>id</c> kardus dari paling bawah ke paling atas.</summary>
-    public IReadOnlyList<int> CartonIdsBottomToTop { get; init; } = [];
-
-    /// <summary>SKU dari kardus paling bawah ke paling atas.</summary>
-    public IReadOnlyList<string> SkusBottomToTop { get; init; } = [];
+    /// <summary>
+    /// Kardus di jalur ini, urut dari paling bawah ke paling atas. Isinya sama dengan entri <c>cells</c> ber-id sama;
+    /// kardus yang menempati beberapa sel diwakili sel kiri-atasnya.
+    /// </summary>
+    public IReadOnlyList<CellDto> Cartons { get; init; } = [];
 }
 
 /// <summary>Jumlah kardus per SKU.</summary>

@@ -20,7 +20,9 @@ public sealed class AnalyzeStackHandler
         (List<DetectedCell> cells, Dictionary<string, MasterSku> master) = Validate(request);
 
         StackScore score = _scoring.Score(cells, master);
-        HashSet<int> violating = [.. score.Violations.Select(v => v.Cell.Id)];
+        List<ViolationDto> violations = [.. score.Violations.Select(ToDto)];
+        HashSet<int> violating = [.. violations.Select(v => v.CartonId)];
+        ILookup<int, string> violationTypes = violations.ToLookup(v => v.CartonId, v => v.Type);
         // jalur dihitung ulang dari restsOn, bukan dari stacks client
         Dictionary<int, int> indexOf = cells.Select((c, i) => (c.Id, i)).ToDictionary(x => x.Id, x => x.i);
         StackPaths paths = SupportGraph.Paths(
@@ -34,7 +36,7 @@ public sealed class AnalyzeStackHandler
             TotalScore = score.TotalScore,
             MaxPossibleScore = score.MaxPossibleScore,
             PercentageScore = score.PercentageScore,
-            Violations = [.. score.Violations.Select(ToDto)],
+            Violations = violations,
             SkuSummary = [.. cells
                 .GroupBy(c => c.Sku, StringComparer.Ordinal)
                 .Select(g =>
@@ -56,7 +58,7 @@ public sealed class AnalyzeStackHandler
                 Path = p,
                 Column = cells[path[0]].Column,
                 Height = path.Count,
-                CartonIdsBottomToTop = [.. path.Select(i => cells[i].Id)],
+                Cartons = [.. path.Select(i => ToStackCarton(cells[i], violationTypes[cells[i].Id]))],
                 ViolationCount = path.Count(i => violating.Contains(cells[i].Id)),
             })],
         };
@@ -182,6 +184,28 @@ public sealed class AnalyzeStackHandler
 
         return (cells, master);
     }
+
+    private static StackSummaryCartonDto ToStackCarton(DetectedCell cell, IEnumerable<string> violations) => new()
+    {
+        Id = cell.Id,
+        Row = cell.Row,
+        Column = cell.Column,
+        Level = cell.Level,
+        RestsOn = cell.RestsOn,
+        Sku = cell.Sku,
+        OcrText = cell.OcrText,
+        OcrConfidence = cell.OcrConfidence,
+        DetectionConfidence = cell.DetectionConfidence,
+        ReadStatus = cell.ReadStatus,
+        BoundingBox = new BoundingBoxDto
+        {
+            X1 = (int)Math.Round(cell.Box.X1),
+            Y1 = (int)Math.Round(cell.Box.Y1),
+            X2 = (int)Math.Round(cell.Box.X2),
+            Y2 = (int)Math.Round(cell.Box.Y2),
+        },
+        Violations = [.. violations.Distinct().Order(StringComparer.Ordinal)],
+    };
 
     private static ViolationDto ToDto(Violation violation) => new()
     {
