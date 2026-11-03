@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using StackInspection.Api.Contracts;
 using StackInspection.Application.Contracts;
 using StackInspection.Application.Exceptions;
 using StackInspection.Domain;
@@ -15,6 +16,72 @@ internal static class ExampleData
 
     /// <summary>id kardus jalur contoh Analyze, bawah → atas.</summary>
     public static readonly int[] AnalyzePathIds = [42, 36, 30, 24, 18, 12, 6, 0];
+
+    /// <summary>
+    /// Response Collect SKU kecil yang lengkap dan konsisten (lolos validasi Preview dari hasil): grid 3 x 2,
+    /// dua tumpukan, kardus id 0 lebar menjembatani keduanya.
+    /// </summary>
+    public static CollectSkuResponse CompleteCollect()
+    {
+        // (id, row, kolom pertama, jumlah kolom, level, restsOn, sku, status)
+        (int Id, int Row, int Column, int Span, int Level, int[] RestsOn, string Sku, ReadStatus Status)[] cartons =
+        [
+            (0, 0, 0, 2, 2, [1, 2], "68582213", ReadStatus.Matched),
+            (1, 1, 0, 1, 1, [3], "68410975", ReadStatus.Matched),
+            (2, 1, 1, 1, 1, [4], "68410975", ReadStatus.Corrected),
+            (3, 2, 0, 1, 0, [], "68140913", ReadStatus.Matched),
+            (4, 2, 1, 1, 0, [], SkuCodes.LabelNotVisible, ReadStatus.LabelNotVisible),
+        ];
+        Dictionary<int, CellDto> topLeft = [];
+        List<CellDto> cells = [];
+        foreach ((int id, int row, int column, int span, int level, int[] restsOn, string sku, ReadStatus status) in cartons)
+        {
+            for (int c = column; c < column + span; c++)
+            {
+                CellDto cell = new()
+                {
+                    Id = id, Row = row, Column = c, Level = level, RestsOn = restsOn, Sku = sku,
+                    OcrText = status == ReadStatus.LabelNotVisible ? null : status == ReadStatus.Corrected ? "6841097" : sku,
+                    OcrConfidence = status == ReadStatus.LabelNotVisible ? 0 : 0.95,
+                    DetectionConfidence = 0.93,
+                    ReadStatus = status,
+                    BoundingBox = new BoundingBoxDto
+                    {
+                        X1 = 160 + (column * 270), Y1 = 1218 + (row * 186), X2 = 160 + ((column + span) * 270), Y2 = 1404 + (row * 186),
+                    },
+                };
+                cells.Add(cell);
+                topLeft.TryAdd(id, cell);
+            }
+        }
+
+        return new CollectSkuResponse
+        {
+            InspectionId = InspectionId,
+            Model = "carton-v1",
+            ImageWidth = 1920,
+            ImageHeight = 3413,
+            RowCount = 3,
+            ColumnCount = 2,
+            ExcludedBackLayerCount = 0,
+            Cells = cells,
+            Stacks =
+            [
+                new StackDto { Path = 0, Column = 0, Height = 3, Cartons = [topLeft[3], topLeft[1], topLeft[0]] },
+                new StackDto { Path = 1, Column = 1, Height = 3, Cartons = [topLeft[4], topLeft[2], topLeft[0]] },
+            ],
+            DistinctSkus =
+            [
+                new DistinctSkuDto { Sku = "68410975", Count = 2 },
+                new DistinctSkuDto { Sku = "68140913", Count = 1 },
+                new DistinctSkuDto { Sku = "68582213", Count = 1 },
+                new DistinctSkuDto { Sku = SkuCodes.LabelNotVisible, Count = 1 },
+            ],
+            Warnings = [CollectWarnings.LabelNotVisiblePresent, CollectWarnings.IrregularGrid],
+            ProcessingTimeMs = 0,
+            Timings = new CollectSkuTimingsDto(),
+        };
+    }
 
     public static CollectSkuResponse Collect() => new()
     {
@@ -139,6 +206,16 @@ internal sealed class AnalyzeStackRequestExample : IExamplesProvider<AnalyzeStac
             new MasterSkuDto { Sku = "68582213", Name = "Bango Kecap Manis 24 x 210ml", MaxStack = 12, Weight = 7.8, Class = "C" },
             new MasterSkuDto { Sku = "68140913", Name = "SariWangi Teh Asli 48 x TB30 x 1.85g", MaxStack = 7, Weight = 3.1, Class = "A" },
         ],
+    };
+}
+
+/// <summary>Contoh request Preview dari hasil: response Collect SKU (atau output LLM berskema sama) + master SKU opsional.</summary>
+internal sealed class StackPreviewFromResultRequestExample : IExamplesProvider<StackPreviewFromResultRequest>
+{
+    public StackPreviewFromResultRequest GetExamples() => new()
+    {
+        CollectResult = ExampleData.CompleteCollect(),
+        MasterSkus = new AnalyzeStackRequestExample().GetExamples().MasterSkus,
     };
 }
 
