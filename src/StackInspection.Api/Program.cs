@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.OpenApi.Models;
 using StackInspection.Api.Errors;
+using StackInspection.Api.Security;
 using StackInspection.Api.Swagger;
 using StackInspection.Application;
 using StackInspection.Application.Configuration;
@@ -43,6 +44,11 @@ builder.Services.AddCors(options => options.AddDefaultPolicy(policy =>
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<ProblemDetailsExceptionHandler>();
 builder.Services.AddInspectionConcurrency(builder.Configuration);
+builder.Services.Configure<ApiKeyOptions>(options =>
+{
+    builder.Configuration.GetSection(ApiKeyOptions.SectionName).Bind(options);
+    options.ApiKeys = builder.Configuration[ApiKeyOptions.EnvironmentVariable] ?? options.ApiKeys;
+});
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
@@ -62,6 +68,18 @@ builder.Services.AddSwaggerGen(options =>
         }
     }
 
+    // Tombol "Authorize" di Swagger UI: key dikirim di header X-Api-Key untuk semua endpoint /api.
+    OpenApiSecurityScheme apiKey = new()
+    {
+        Type = SecuritySchemeType.ApiKey,
+        In = ParameterLocation.Header,
+        Name = ApiKeyMiddleware.HeaderName,
+        Description = "API key dari tim AI.",
+        Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "ApiKey" },
+    };
+    options.AddSecurityDefinition("ApiKey", apiKey);
+    options.AddSecurityRequirement(new OpenApiSecurityRequirement { [apiKey] = [] });
+
     options.ExampleFilters();
     options.OperationFilter<ModelDropdownFilter>();
 });
@@ -72,6 +90,7 @@ WebApplication app = builder.Build();
 app.UseExceptionHandler();
 app.UseStatusCodePages();
 app.UseCors();
+app.UseMiddleware<ApiKeyMiddleware>();
 app.UseRateLimiter();
 if (app.Configuration.GetValue("Swagger:Enabled", app.Environment.IsDevelopment()))
 {
@@ -86,7 +105,7 @@ if (app.Configuration.GetValue("Swagger:Enabled", app.Environment.IsDevelopment(
             document.Servers = [new OpenApiServer { Url = prefix }];
         }
     }));
-    app.UseSwaggerUI();
+    app.UseSwaggerUI(options => options.EnablePersistAuthorization());
 }
 
 app.MapControllers();
