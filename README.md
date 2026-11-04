@@ -16,6 +16,18 @@ API untuk menilai kualitas tumpukan kardus di truk/kontainer dari sebuah foto (b
 
 Swagger UI: `/swagger` (aktif jika `Swagger:Enabled = true`). Health check: `/health`.
 
+### API key
+
+Semua endpoint `/api/...` wajib header `X-Api-Key`; tanpa key yang terdaftar → 401 `API_KEY_INVALID`.
+`/health` dan Swagger UI tetap terbuka (isi key lewat tombol **Authorize** sebelum "Try it out").
+
+- Key diisi lewat **satu** environment variable, dipisah koma (satu key per pemakai):
+  `AUTH_APIKeys=<key-planogram>,<key-ai>`. Jangan tulis key di `appsettings.json`.
+- Buat key acak: `openssl rand -hex 32`. Mencabut akses = hapus key itu dari daftar lalu redeploy.
+- `AUTH_APIKeys` kosong = semua request `/api` ditolak. `Auth__Enabled=false` mematikan pengecekan (hanya untuk lokal).
+- Development: taruh key di `appsettings.Development.json` (tidak di-commit), misalnya
+  `"Auth": { "ApiKeys": "dev-key" }`.
+
 ## Layout tumpukan (`cells`, `stacks`)
 
 Setiap kardus punya dua lapis informasi (rencana: `../brief/PLAN-stack-layout-engine.md`):
