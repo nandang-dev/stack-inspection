@@ -34,7 +34,15 @@ public sealed class StackInspectionsApiTests : IClassFixture<StackInspectionsApi
 
     public sealed class FakeVisionFactory : WebApplicationFactory<Program>
     {
+        public const string ApiKey = "test-key-planogram";
+
         public string? FixturePath { get; init; }
+
+        protected override void ConfigureClient(HttpClient client)
+        {
+            base.ConfigureClient(client);
+            client.DefaultRequestHeaders.Add("X-Api-Key", ApiKey);
+        }
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
@@ -44,6 +52,7 @@ public sealed class StackInspectionsApiTests : IClassFixture<StackInspectionsApi
                 ["Vision:UseFake"] = "true",
                 ["Vision:FakeFixturePath"] = FixturePath ?? "fixtures/reference-grid.json",
                 ["Swagger:Enabled"] = "true",
+                ["AUTH_APIKeys"] = $"{ApiKey}, test-key-ai,",
             }));
         }
     }
@@ -476,5 +485,80 @@ public sealed class StackInspectionsApiTests : IClassFixture<StackInspectionsApi
 
         Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
         Assert.Equal("*", response.Headers.GetValues("Access-Control-Allow-Origin").Single());
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("kunci-salah")]
+    public async Task Api_WithoutValidApiKey_Returns401(string? key)
+    {
+        using HttpClient client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Remove("X-Api-Key");
+        if (key is not null)
+        {
+            client.DefaultRequestHeaders.TryAddWithoutValidation("X-Api-Key", key);
+        }
+
+        using HttpResponseMessage response = await client.GetAsync("/api/v1/models");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        JsonNode? problem = JsonNode.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("API_KEY_INVALID", problem?["code"]?.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData(FakeVisionFactory.ApiKey)]
+    [InlineData("test-key-ai")]
+    public async Task Api_WithAnyRegisteredApiKey_IsAllowed(string key)
+    {
+        using HttpClient client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Remove("X-Api-Key");
+        client.DefaultRequestHeaders.Add("X-Api-Key", key);
+
+        using HttpResponseMessage response = await client.GetAsync("/api/v1/models");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("/health")]
+    [InlineData("/swagger/v1/swagger.json")]
+    public async Task HealthAndSwagger_WithoutApiKey_AreOpen(string path)
+    {
+        using HttpClient client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Remove("X-Api-Key");
+
+        using HttpResponseMessage response = await client.GetAsync(path);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Swagger_DeclaresApiKeyHeader()
+    {
+        using HttpClient client = _factory.CreateClient();
+
+        JsonNode? doc = JsonNode.Parse(await client.GetStringAsync("/swagger/v1/swagger.json"));
+
+        Assert.Equal("X-Api-Key", (string?)doc?["components"]?["securitySchemes"]?["ApiKey"]?["name"]);
+        Assert.NotNull(doc?["security"]?[0]?["ApiKey"]);
+    }
+
+    [Fact]
+    public async Task Api_WhenNoKeysConfigured_RejectsEverything()
+    {
+        using WebApplicationFactory<Program> noKeys = _factory.WithWebHostBuilder(builder =>
+            builder.ConfigureAppConfiguration(config => config.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["AUTH_APIKeys"] = " , ",
+            })));
+        using HttpClient client = noKeys.CreateClient();
+        client.DefaultRequestHeaders.Remove("X-Api-Key");
+        client.DefaultRequestHeaders.Add("X-Api-Key", "");
+
+        using HttpResponseMessage response = await client.GetAsync("/api/v1/models");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 }
