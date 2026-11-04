@@ -352,6 +352,38 @@ public sealed class StackInspectionsApiTests : IClassFixture<StackInspectionsApi
     }
 
     [Fact]
+    public async Task Swagger_BehindPathPrefix_UsesForwardedPrefixAsServer()
+    {
+        using HttpClient client = _factory.CreateClient();
+        using HttpRequestMessage request = new(HttpMethod.Get, "/swagger/v1/swagger.json");
+        request.Headers.Add("X-Forwarded-Prefix", "/stack-inspection");
+
+        using HttpResponseMessage response = await client.SendAsync(request);
+        JsonNode? doc = JsonNode.Parse(await response.Content.ReadAsStringAsync());
+
+        Assert.Equal("/stack-inspection", (string?)doc?["servers"]?[0]?["url"]);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("https://evil.example")]
+    [InlineData("//evil.example")]
+    public async Task Swagger_WithoutValidPrefix_HasNoServers(string? prefix)
+    {
+        using HttpClient client = _factory.CreateClient();
+        using HttpRequestMessage request = new(HttpMethod.Get, "/swagger/v1/swagger.json");
+        if (prefix is not null)
+        {
+            request.Headers.Add("X-Forwarded-Prefix", prefix);
+        }
+
+        using HttpResponseMessage response = await client.SendAsync(request);
+        JsonNode? doc = JsonNode.Parse(await response.Content.ReadAsStringAsync());
+
+        Assert.Null(doc?["servers"]);
+    }
+
+    [Fact]
     public async Task Models_ListReturnsCatalogWithDefault()
     {
         using HttpClient client = _factory.CreateClient();
