@@ -75,7 +75,17 @@ app.UseCors();
 app.UseRateLimiter();
 if (app.Configuration.GetValue("Swagger:Enabled", app.Environment.IsDevelopment()))
 {
-    app.UseSwagger();
+    // Di balik reverse proxy dengan path (mis. vision.enerren.com/stack-inspection), Traefik membuang prefix
+    // dan mengirimnya di X-Forwarded-Prefix. Prefix itu dipasang sebagai server agar "Try it out" memanggil
+    // /stack-inspection/api/... dan bukan /api/... di root domain.
+    app.UseSwagger(options => options.PreSerializeFilters.Add((document, request) =>
+    {
+        string? prefix = SwaggerPathPrefix.FromHeader(request.Headers["X-Forwarded-Prefix"]);
+        if (prefix is not null)
+        {
+            document.Servers = [new OpenApiServer { Url = prefix }];
+        }
+    }));
     app.UseSwaggerUI();
 }
 
