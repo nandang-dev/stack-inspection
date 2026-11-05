@@ -114,6 +114,10 @@ public sealed class FakeSkuLabelReader(FakeVisionFixtureProvider provider) : ISk
             b.CenterX >= r.X1 && b.CenterX <= r.X2 && b.CenterY >= r.Y1 && b.CenterY <= r.Y2))]);
     }
 
+    public Task<IReadOnlyList<OcrText>> ReadRotatedAsync(
+        VisionImage image, IReadOnlyList<BoundingBox> regions, int minAreaWidth, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<OcrText>>([]);
+
     private static BoundingBox Part(BoundingBox box, double x1, double y1, double x2, double y2) =>
         new(box.X1 + (box.Width * x1), box.Y1 + (box.Height * y1), box.X1 + (box.Width * x2), box.Y1 + (box.Height * y2));
 }

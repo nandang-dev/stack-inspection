@@ -165,6 +165,87 @@ public sealed partial class PaddleOcrTextReader : ISkuLabelReader, ITextSpotter,
         }
     }
 
+    public async Task<IReadOnlyList<OcrText>> ReadRotatedAsync(
+        VisionImage image, IReadOnlyList<BoundingBox> regions, int minAreaWidth, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(regions);
+        OpenCvImage source = OpenCvImage.From(image);
+        List<(Mat Input, BoundingBox Region)> inputs = [];
+        try
+        {
+            foreach (BoundingBox region in regions)
+            {
+                using Mat? crop = source.Crop(region);
+                if (crop is null)
+                {
+                    continue;
+                }
+
+                foreach (RotateFlags flag in (RotateFlags[])[RotateFlags.Rotate90Clockwise, RotateFlags.Rotate90Counterclockwise])
+                {
+                    using Mat rotated = new();
+                    Cv2.Rotate(crop, rotated, flag);
+                    inputs.Add((Prepare(rotated, minAreaWidth), region));
+                }
+            }
+
+            if (inputs.Count == 0)
+            {
+                return [];
+            }
+
+            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                _ocr.Detector.BoxScoreThreahold = minAreaWidth > 0 ? _enlargedBoxScore : _nativeBoxScore;
+                List<OcrText> texts = [];
+                foreach ((Mat input, BoundingBox region) in inputs)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    texts.AddRange(_ocr.Run(input).Regions
+                        .Where(r => !string.IsNullOrWhiteSpace(r.Text))
+                        .Select(r => new OcrText(r.Text, r.Score, region)));
+                }
+
+                return texts;
+            }
+            finally
+            {
+                _gate.Release();
+            }
+        }
+        finally
+        {
+            foreach ((Mat input, _) in inputs)
+            {
+                input.Dispose();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Potongan label yang sudah diputar: diperbesar seperti <see cref="OcrPacker.UpscaleOf"/> (bicubic), lalu diberi
+    /// bingkai putih <see cref="PieceGap"/> px seperti potongan di halaman deteksi.
+    /// </summary>
+    private Mat Prepare(Mat rotated, int minAreaWidth)
+    {
+        double scale = OcrPacker.UpscaleOf(rotated.Width, Math.Max(0, minAreaWidth), _maxUpscale);
+        using Mat resized = new();
+        if (scale > 1)
+        {
+            Cv2.Resize(
+                rotated, resized, new Size((int)Math.Round(rotated.Width * scale), (int)Math.Round(rotated.Height * scale)), 0, 0, InterpolationFlags.Cubic);
+        }
+        else
+        {
+            rotated.CopyTo(resized);
+        }
+
+        Mat framed = new();
+        Cv2.CopyMakeBorder(resized, framed, PieceGap, PieceGap, PieceGap, PieceGap, BorderTypes.Constant, Scalar.All(255));
+        return framed;
+    }
+
     public async Task<IReadOnlyList<OcrText>> SpotAsync(VisionImage image, BoundingBox region, CancellationToken cancellationToken)
     {
         using Mat? crop = OpenCvImage.From(image).Crop(region);
