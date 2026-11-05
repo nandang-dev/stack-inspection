@@ -265,6 +265,36 @@ public class CollectSkuHandlerTests
     }
 
     [Fact]
+    public async Task LabelLocator_VerticalLabel_ReadAfterRotation_OnlyConfidentEightDigits()
+    {
+        // Carton(x, y) = 400 × 300. Kotak label tegak (40 × 120) di kanan; putaran salah = angka acak/huruf.
+        CartonBox standing = Build.Carton(300, 600);
+        CartonBox lowConfidence = Build.Carton(710, 600);
+        BoundingBox standingLabel = new(640, 650, 680, 770);
+        BoundingBox lowLabel = new(1050, 650, 1090, 770);
+        StubReader reader = new([]);
+        // seperti tuning case 01: putaran benar "[65067525]" (bingkai label), putaran salah huruf/angka acak
+        reader.Rotated[standingLabel] = [("[65067525]", 0.924), ("SZS2L0S9", 0.97), ("(869099)", 0.516)];
+        reader.Rotated[lowLabel] = [("65067525", 0.62)];
+        StubLocator locator = new(new Dictionary<BoundingBox, BoundingBox>
+        {
+            [standing.Box] = standingLabel,
+            [lowConfidence.Box] = lowLabel,
+        });
+
+        CollectSkuResponse result = await Build.Handler(
+                new StubDecoder(3000, 4000), new StubDetector([standing, lowConfidence]), reader, locator: locator)
+            .HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None);
+
+        Assert.Equal(2, reader.RotatedRegions.Count);
+        // tidak ada label mendatar (tahap 0 @320 dilewati); area tetap hanya untuk kardus yang belum terbaca
+        Assert.Equal([0], reader.Scans);
+        Dictionary<int, CellDto> byColumn = result.Cells.ToDictionary(c => c.Column);
+        Assert.Equal(("65067525", ReadStatus.Matched), (byColumn[0].Sku, byColumn[0].ReadStatus));
+        Assert.Equal(ReadStatus.LabelNotVisible, byColumn[1].ReadStatus);
+    }
+
+    [Fact]
     public async Task LabelLocator_Disabled_ReadsFixedAreaOfAllCartonsLikeBefore()
     {
         CartonBox rightLabel = Build.Carton(300, 600);

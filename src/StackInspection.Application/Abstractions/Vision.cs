@@ -88,6 +88,18 @@ public interface ISkuLabelReader
     /// <param name="cancellationToken">Token pembatalan.</param>
     Task<IReadOnlyList<OcrText>> ReadAllAsync(
         VisionImage image, IReadOnlyList<BoundingBox> regions, int minAreaWidth, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Membaca area label yang tegak (teks diputar 90°): setiap area dipotong, diputar 90° searah dan berlawanan
+    /// jarum jam, lalu keduanya di-OCR. Arah yang salah biasanya menghasilkan angka acak, jadi pemanggil wajib
+    /// menyaring hasilnya. <see cref="OcrText.Box"/> = area asal (koordinat foto).
+    /// </summary>
+    /// <param name="image">Foto.</param>
+    /// <param name="regions">Area label tegak (koordinat foto).</param>
+    /// <param name="minAreaWidth">Sama seperti <see cref="ReadAllAsync"/>, diukur setelah diputar.</param>
+    /// <param name="cancellationToken">Token pembatalan.</param>
+    Task<IReadOnlyList<OcrText>> ReadRotatedAsync(
+        VisionImage image, IReadOnlyList<BoundingBox> regions, int minAreaWidth, CancellationToken cancellationToken);
 }
 
 /// <summary>Mencari teks pada area foto (dipakai untuk mendeteksi stempel aplikasi kamera).</summary>

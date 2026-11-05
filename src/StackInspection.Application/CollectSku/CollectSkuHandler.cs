@@ -29,6 +29,7 @@ public sealed partial class CollectSkuHandler
     private const int MaxSkuDigits = 9;
     private const int MaxPartialDigits = MinSkuDigits;
     private static readonly char[] WordSeparators = [' ', '\t', ':', ';', ',', '/'];
+    private static readonly char[] LabelFramePunctuation = ['[', ']', '(', ')', '{', '}', '.', '-', '_', '\'', '"'];
 
     private readonly IImageDecoder _decoder;
     private readonly ICartonDetector _detector;
@@ -118,11 +119,22 @@ public sealed partial class CollectSkuHandler
 
         // OCR tahap 0: kotak label hasil label locator (di mana pun letaknya di kardus)
         BoundingBox[] located = [.. labels.SelectMany(l => l)];
-        if (located.Length > 0)
+        BoundingBox[] upright = [.. located.Where(l => !IsVertical(l))];
+        if (upright.Length > 0)
         {
             texts = await _reader
-                .ReadAllAsync(image, located, _vision.LabelLocatorMinAreaWidth, cancellationToken)
+                .ReadAllAsync(image, upright, _vision.LabelLocatorMinAreaWidth, cancellationToken)
                 .ConfigureAwait(false);
+        }
+
+        // OCR tahap 0b: label tegak (diputar 90°), dibaca setelah diputar ke dua arah; hanya angka yang meyakinkan
+        BoundingBox[] vertical = [.. located.Where(IsVertical)];
+        if (vertical.Length > 0 && _vision.LabelLocatorRotatedMinConfidence > 0)
+        {
+            IReadOnlyList<OcrText> rotated = await _reader
+                .ReadRotatedAsync(image, vertical, _vision.LabelLocatorMinAreaWidth, cancellationToken)
+                .ConfigureAwait(false);
+            texts = [.. texts, .. rotated.Where(IsConfidentRotatedRead)];
         }
 
         IReadOnlyList<SkuReading> readings = ReadAll();
@@ -400,6 +412,20 @@ public sealed partial class CollectSkuHandler
 
         return [.. cartons.Select((carton, i) => (IReadOnlyList<BoundingBox>)[.. found[i].Select(l => Expand(l.Box, carton.Box))])];
     }
+
+    /// <summary>Kotak label lebih tinggi daripada lebarnya = teks label diputar 90° (label mendatar selalu lebar).</summary>
+    private static bool IsVertical(BoundingBox label) => label.Height > label.Width;
+
+    /// <summary>
+    /// Teks dari label yang diputar: tepat 8 angka asli dalam satu kata (tanda baca di tepi kata dibuang, mis.
+    /// "[65067525]" dari bingkai label) dan keyakinan cukup.
+    /// </summary>
+    private bool IsConfidentRotatedRead(OcrText text) =>
+        text.Confidence >= _vision.LabelLocatorRotatedMinConfidence
+        && text.Text
+            .Split(WordSeparators, StringSplitOptions.RemoveEmptyEntries)
+            .Select(word => word.Trim(LabelFramePunctuation))
+            .Any(word => word.Length == SkuMatcher.SkuLength && word.All(char.IsAsciiDigit));
 
     private BoundingBox Expand(BoundingBox label, BoundingBox carton)
     {

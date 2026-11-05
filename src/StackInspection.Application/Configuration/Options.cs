@@ -162,6 +162,15 @@ public sealed class VisionOptions
     public int LabelLocatorMinAreaWidth { get; set; } = 320;
 
     /// <summary>
+    /// Kotak label tegak (tinggi &gt; lebar, label diputar 90°) dibaca setelah diputar ke dua arah. Teks dari putaran
+    /// hanya dipakai jika berupa tepat 8 angka asli (tanpa huruf mirip angka) dan keyakinannya ≥ nilai ini, karena
+    /// putaran yang salah menghasilkan angka acak (aturan yang sama dengan pre-label data Carton Trainer).
+    /// 0 = label tegak tidak dibaca.
+    /// </summary>
+    [Range(0.0, 1.0)]
+    public double LabelLocatorRotatedMinConfidence { get; set; } = 0.9;
+
+    /// <summary>
     /// Kemiripan tampilan (cosine) minimal ke kardus acuan. Tuning case 01: kardus SKU &amp; desain sama 0,84–0,95,
     /// SKU lain ≤ 0,75.
     /// </summary>

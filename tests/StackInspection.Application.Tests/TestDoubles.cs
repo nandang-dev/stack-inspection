@@ -67,6 +67,21 @@ internal sealed class StubReader(Dictionary<BoundingBox, (string? Label, string?
     /// <summary>Teks di posisi bebas (koordinat foto), mis. label di kanan-bawah kardus.</summary>
     public List<OcrText> Anywhere { get; } = [];
 
+    /// <summary>Hasil OCR per area label tegak (kedua arah putaran), dicocokkan dari area yang diminta.</summary>
+    public Dictionary<BoundingBox, (string Text, double Confidence)[]> Rotated { get; } = [];
+
+    /// <summary>Area setiap panggilan <see cref="ReadRotatedAsync"/>.</summary>
+    public List<BoundingBox> RotatedRegions { get; } = [];
+
+    public Task<IReadOnlyList<OcrText>> ReadRotatedAsync(
+        VisionImage image, IReadOnlyList<BoundingBox> regions, int minAreaWidth, CancellationToken cancellationToken)
+    {
+        RotatedRegions.AddRange(regions);
+        return Task.FromResult<IReadOnlyList<OcrText>>([.. regions
+            .SelectMany(r => Rotated.FirstOrDefault(e => r.CenterX >= e.Key.X1 && r.CenterX <= e.Key.X2
+                && r.CenterY >= e.Key.Y1 && r.CenterY <= e.Key.Y2).Value ?? [], (r, t) => new OcrText(t.Text, t.Confidence, r))]);
+    }
+
     public Task<IReadOnlyList<OcrText>> ReadAllAsync(
         VisionImage image, IReadOnlyList<BoundingBox> regions, int minAreaWidth, CancellationToken cancellationToken)
     {
