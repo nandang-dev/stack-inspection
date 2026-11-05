@@ -143,6 +143,40 @@ public sealed class StackInspectionsApiTests : IClassFixture<StackInspectionsApi
     }
 
     [Fact]
+    public async Task PreviewFromResult_WithTimings_ShowsStageBreakdown()
+    {
+        using HttpClient client = _factory.CreateClient();
+        JsonNode body = JsonNode.Parse(await client.GetStringAsync("/swagger/v1/swagger.json"))!
+            ["paths"]!["/api/v1/stack-inspections/preview-from-result"]!["post"]!["requestBody"]!["content"]!["application/json"]!["example"]!
+            .DeepClone();
+        body["processingTimeMs"] = 104027;
+        body["timings"] = JsonNode.Parse("""{"decodeMs":23,"inspectMs":38,"detectMs":1142,"labelLocateMs":5636,"ocrMs":96666,"skuResolveMs":519,"buildMs":3}""");
+
+        using StringContent content = new(body.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
+        using HttpResponseMessage response = await client.PostAsync("/api/v1/stack-inspections/preview-from-result", content);
+        string html = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("<dt>Label locator</dt><dd>5,636 ms &#183; 5%</dd>", html, StringComparison.Ordinal);
+        Assert.Contains("<dt>OCR</dt><dd>96,666 ms &#183; 93%</dd>", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task PreviewFromResult_WithoutTimings_HidesStageBreakdown()
+    {
+        using HttpClient client = _factory.CreateClient();
+        JsonNode body = JsonNode.Parse(await client.GetStringAsync("/swagger/v1/swagger.json"))!
+            ["paths"]!["/api/v1/stack-inspections/preview-from-result"]!["post"]!["requestBody"]!["content"]!["application/json"]!["example"]!
+            .DeepClone();
+        body["timings"] = new JsonObject();
+
+        using StringContent content = new(body.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
+        string html = await (await client.PostAsync("/api/v1/stack-inspections/preview-from-result", content)).Content.ReadAsStringAsync();
+
+        Assert.DoesNotContain("<dt>Label locator</dt>", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task PreviewFromResult_NegativeTokens_Returns400()
     {
         using HttpClient client = _factory.CreateClient();
