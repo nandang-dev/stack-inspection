@@ -154,14 +154,17 @@ export interface TokenUsageDto {
   totalTokens?: number;
 }
 
-/** Body POST /api/v1/stack-inspections/preview-from-result (response: HTML lampiran). */
+/**
+ * Query POST /api/v1/stack-inspections/preview-from-result. Body = CollectSkuResponse apa adanya
+ * (response: HTML lampiran).
+ */
 export interface StackPreviewFromResultRequest {
-  /** Response Collect SKU (atau output LLM berskema sama) apa adanya. */
-  collectResult: CollectSkuResponse;
-  /** Opsional: diisi = skor & pelanggaran ditampilkan. */
-  masterSkus?: MasterSkuDto[] | null;
-  /** Opsional: diisi = token input, output, dan total ditampilkan. */
-  tokenUsage?: TokenUsageDto | null;
+  /** Opsional: JSON array MasterSkuDto[] sebagai string; diisi = skor & pelanggaran ditampilkan. */
+  masterSkus?: string | null;
+  /** Opsional, ≥ 0: token input LLM. */
+  inputTokens?: number | null;
+  /** Opsional, ≥ 0: token output LLM. */
+  outputTokens?: number | null;
 }
 
 export interface ViolationDto {

@@ -209,15 +209,10 @@ internal sealed class AnalyzeStackRequestExample : IExamplesProvider<AnalyzeStac
     };
 }
 
-/// <summary>Contoh request Preview dari hasil: response Collect SKU (atau output LLM berskema sama) + master SKU opsional.</summary>
-internal sealed class StackPreviewFromResultRequestExample : IExamplesProvider<StackPreviewFromResultRequest>
+/// <summary>Contoh body Preview dari hasil: response Collect SKU lengkap dan konsisten (atau output LLM berskema sama).</summary>
+internal sealed class PreviewFromResultBodyExample : IExamplesProvider<CollectSkuResponse>
 {
-    public StackPreviewFromResultRequest GetExamples() => new()
-    {
-        CollectResult = ExampleData.CompleteCollect(),
-        MasterSkus = new AnalyzeStackRequestExample().GetExamples().MasterSkus,
-        TokenUsage = new TokenUsageDto { InputTokens = 2140, OutputTokens = 1870 },
-    };
+    public CollectSkuResponse GetExamples() => ExampleData.CompleteCollect();
 }
 
 /// <summary>Contoh response 200 Analyze (fixture referensi brief).</summary>
