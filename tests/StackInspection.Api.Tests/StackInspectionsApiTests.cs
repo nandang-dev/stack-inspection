@@ -111,10 +111,9 @@ public sealed class StackInspectionsApiTests : IClassFixture<StackInspectionsApi
             "/api/v1/stack-inspections/collect-sku", Upload(Jpeg, "68410975", "68582213", "68140913"));
         CollectSkuResponse? collect = await collectResponse.Content.ReadFromJsonAsync<CollectSkuResponse>(Json);
 
+        string masters = Uri.EscapeDataString(JsonSerializer.Serialize(Master, Json));
         using HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/v1/stack-inspections/preview-from-result",
-            new StackPreviewFromResultRequest { CollectResult = collect, MasterSkus = Master },
-            Json);
+            $"/api/v1/stack-inspections/preview-from-result?masterSkus={masters}", collect, Json);
         string html = await response.Content.ReadAsStringAsync();
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -134,13 +133,7 @@ public sealed class StackInspectionsApiTests : IClassFixture<StackInspectionsApi
         CollectSkuResponse? collect = await collectResponse.Content.ReadFromJsonAsync<CollectSkuResponse>(Json);
 
         using HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/v1/stack-inspections/preview-from-result",
-            new StackPreviewFromResultRequest
-            {
-                CollectResult = collect,
-                TokenUsage = new TokenUsageDto { InputTokens = 2140, OutputTokens = 31870 },
-            },
-            Json);
+            "/api/v1/stack-inspections/preview-from-result?inputTokens=2140&outputTokens=31870", collect, Json);
         string html = await response.Content.ReadAsStringAsync();
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -157,13 +150,7 @@ public sealed class StackInspectionsApiTests : IClassFixture<StackInspectionsApi
         CollectSkuResponse? collect = await collectResponse.Content.ReadFromJsonAsync<CollectSkuResponse>(Json);
 
         using HttpResponseMessage response = await client.PostAsJsonAsync(
-            "/api/v1/stack-inspections/preview-from-result",
-            new StackPreviewFromResultRequest
-            {
-                CollectResult = collect,
-                TokenUsage = new TokenUsageDto { InputTokens = -1, OutputTokens = 10 },
-            },
-            Json);
+            "/api/v1/stack-inspections/preview-from-result?inputTokens=-1&outputTokens=10", collect, Json);
         string json = await response.Content.ReadAsStringAsync();
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
@@ -190,9 +177,9 @@ public sealed class StackInspectionsApiTests : IClassFixture<StackInspectionsApi
     {
         using HttpClient client = _factory.CreateClient();
         const string body = """
-            {"collectResult":{"imageWidth":0,"imageHeight":0,"rowCount":1,"columnCount":1,"cells":[
+            {"imageWidth":0,"imageHeight":0,"rowCount":1,"columnCount":1,"cells":[
               {"id":0,"row":0,"column":0,"level":3,"restsOn":[],"sku":"68140913","readStatus":"Matched",
-               "boundingBox":{"x1":0,"y1":0,"x2":10,"y2":10}}]}}
+               "boundingBox":{"x1":0,"y1":0,"x2":10,"y2":10}}]}
             """;
 
         using StringContent content = new(body, System.Text.Encoding.UTF8, "application/json");
