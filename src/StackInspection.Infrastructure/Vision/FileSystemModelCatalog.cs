@@ -58,9 +58,11 @@ public sealed class FileSystemModelCatalog : IModelCatalog
         {
             string name = Path.GetFileName(folder);
             ModelCardFile? card = ReadCard(Path.Combine(folder, "model-card.json"));
-            if (IsAuxiliaryModel(card?.Task))
+            if (IsAuxiliaryModel(card?.Task) || string.Equals(name, defaults.LabelLocatorModel, StringComparison.Ordinal))
             {
-                continue; // classifier fast reject / embedder tampilan, bukan model deteksi
+                // classifier fast reject / embedder tampilan / label locator, bukan model deteksi kardus. Model card
+                // label locator dari Carton Trainer belum berisi task, jadi juga dikenali dari Vision:LabelLocatorModel.
+                continue;
             }
 
             string? onnxFile = card?.Onnx?.File is { Length: > 0 } file && File.Exists(Path.Combine(folder, file))
@@ -87,11 +89,15 @@ public sealed class FileSystemModelCatalog : IModelCatalog
         return models;
     }
 
-    /// <summary>Model pendukung (Photo:ClassifierModel, Vision:AppearanceModel) yang tidak boleh muncul sebagai detektor.</summary>
+    /// <summary>
+    /// Model pendukung (Photo:ClassifierModel, Vision:AppearanceModel, Vision:LabelLocatorModel) yang tidak boleh muncul
+    /// sebagai detektor.
+    /// </summary>
     private static bool IsAuxiliaryModel(string? task) =>
         task is not null
         && (task.Contains("classifier", StringComparison.OrdinalIgnoreCase)
-            || task.Contains("embedder", StringComparison.OrdinalIgnoreCase));
+            || task.Contains("embedder", StringComparison.OrdinalIgnoreCase)
+            || task.Contains("locator", StringComparison.OrdinalIgnoreCase));
 
     private static ModelCardFile? ReadCard(string path)
     {

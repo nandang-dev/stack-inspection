@@ -95,6 +95,8 @@ tidak di-commit) cukup untuk development. Vision asli diuji di Linux (Docker) da
 | `Photo:OverlayKeywords` | GPS Map Camera, Timemark, Lat, Long, Kode Foto | Kata kunci gate stempel kamera (hanya jika `CameraOverlayEnabled`) |
 | `Vision:PartialReadMinDigits` | 5 | Nomor SKU yang hanya terbaca sebagian (label terpotong/tertutup plastik, stiker, body kendaraan) dilengkapi dari SKU yang terbaca utuh di foto yang sama atau dari `candidateSkus`, jika potongannya ≥ 5 digit, berurutan, dan cocok ke tepat satu SKU (potongan ≥ 7 digit boleh beda 1 digit, mis. `1972453` → `64972453`). Status `Corrected`, warning `SKU_CORRECTED_BY_PARTIAL_READ`. 0 = nonaktif |
 | `Vision:AppearanceModel` | `carton-embed-v1` | Kardus yang labelnya tetap tidak terbaca diberi SKU kardus lain di foto yang sama yang tampilannya sangat mirip (embedder MobileNetV3 ImageNet, ±15 ms per 64 kardus). Status `InferredByAppearance`, warning `SKU_INFERRED_BY_APPEARANCE`. Kosong = nonaktif |
+| `Vision:LabelLocatorModel` | `label-loc-v1` | Label locator (YOLOX-nano 1 kelas, Carton Trainer) mencari kotak label nomor SKU di setiap kardus, di mana pun letaknya. OCR tahap 0 membaca kotak itu (+ margin, diperbesar sampai `LabelLocatorMinAreaWidth` px); kardus yang belum terbaca lanjut ke area label tetap dan `OcrRetryScans` seperti sebelumnya. Waktunya di `timings.labelLocateMs` (±4 ms/kardus di Mac). Folder model tidak ada → warning di log, OCR seperti sebelum ada locator. Kosong = nonaktif |
+| `Vision:LabelLocatorConfidence` / `LabelLocatorMargin` / `LabelLocatorMinAreaWidth` | 0.5 / 0.3 / 320 | Skor minimal kotak label; margin area OCR × sisi pendek kotak (kotak kadang memotong digit terakhir); lebar minimal area OCR setelah diperbesar |
 | `Vision:AppearanceMinSimilarity` / `AppearanceMinReferences` / `AppearanceMinMargin` | 0.80 / 1 / 0.05 | Syarat inferensi tampilan: minimal 1 kardus terbaca dengan kemiripan ≥ 0.80, dan SKU lain kalah ≥ 0.05. Tuning case 01 (container biru): kardus SKU & desain sama 0.84–0.95, SKU lain ≤ 0.75 (pada 0.95 hampir tidak ada yang terisi). Risiko diketahui: foto 4519909695 punya kardus Lux di balik plastik yang mirip teh Sariwangi ±0.93 → akan diberi SKU teh (salah); naikkan nilai ini jika kasus seperti itu sering terjadi |
 | `Photo:ClassifierModel` / `ClassifierRejectThreshold` | `fast-reject-v3` / 0.7565 | Fast reject classifier (MobileNetV3, ±3 ms/foto) dijalankan setelah gate resolusi, sebelum deteksi: foto ditolak (`FAST_REJECTED`) jika p(tolak) ≥ ambang; di bawahnya (ragu) lolos. Model = subfolder di `Vision:ModelsDirectory` (model card `task` berisi "classifier", tidak muncul di daftar model deteksi). Skor setiap foto dicatat di log `Fast reject classifier ...`. Kosong = nonaktif. Validasi silang fast-reject-v3 di ambang 0.7565: 1/65 foto layak tertolak, 72% foto tidak layak tertangkap |
 | `Photo:MinCartonCount` / `MinCartonCoverage` | 5 / 0.08 | Fast reject sebelum OCR: foto ditolak (`FAST_REJECTED`) jika kardus terdeteksi < 5 atau total luas kotak kardus < 8% luas foto (bukan muatan, kontainer kosong, terlalu jauh). Gate yang menolak dicatat di log `Fast reject: gate ...`. 0 = nonaktif |
@@ -117,6 +119,9 @@ File model **tidak di-commit** dan **tidak ikut di image** (sesuai brief). Lokas
   carton-embed-v1/        ← embedder tampilan kardus (Vision:AppearanceModel), bukan model deteksi
     carton-embed-v1.onnx
     model-card.json
+  label-loc-v1/           ← label locator (Vision:LabelLocatorModel), bukan model deteksi kardus
+    label-loc-v1.onnx
+    model-card.json
   fast-reject-v3/         ← classifier fast reject (Photo:ClassifierModel), bukan model deteksi
     fast-reject-v3.onnx
     model-card.json       ← task "fast-reject classifier ...", recommendedRejectThreshold
@@ -137,6 +142,12 @@ Embedder tampilan kardus: salin `carton-trainer/registry/models/carton-embed-vN/
 membuatnya tidak muncul di daftar model deteksi. Input `[N,3,192,192]` RGB 0–1 (crop kotak kardus, resize langsung
 INTER_AREA), output `embedding` `[N,216]` sudah dinormalisasi L2.
 Jika folder model tidak ada, inferensi tampilan dilewati (warning di log), Collect SKU tetap berjalan.
+
+Label locator: salin `carton-trainer/registry/models/label-loc-vN/` (`.onnx` + `model-card.json`) ke
+`<ModelsDirectory>/label-loc-vN/` dan set `Vision:LabelLocatorModel`. Folder dengan nama itu (atau model card `task`
+berisi "locator") tidak muncul di daftar model deteksi. Input `[1,3,320,320]` BGR 0–255: crop kotak kardus dari foto
+asli, perkecil INTER_AREA sampai sisi terpanjang 384 px, lalu letterbox YOLOX (kiri-atas, isi 114); output
+`[1,2100,6]` YOLOX. Label tegak (diputar 90°) sudah ditemukan, tetapi belum diputar sebelum OCR.
 
 Classifier fast reject: salin folder `carton-trainer/registry/models/fast-reject-vN/` (cukup `.onnx` +
 `model-card.json`) ke `<ModelsDirectory>/fast-reject-vN/`, set `Photo:ClassifierModel` dan

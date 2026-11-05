@@ -139,6 +139,14 @@ public sealed class FakeCartonEmbedder : ICartonEmbedder
         Task.FromResult<IReadOnlyList<float[]>>([]);
 }
 
+/// <summary>Label locator palsu: tidak menemukan label, sehingga OCR memakai area label tetap seperti sebelumnya.</summary>
+public sealed class FakeLabelLocator : ILabelLocator
+{
+    public Task<IReadOnlyList<IReadOnlyList<LabelBox>>> LocateAsync(
+        VisionImage image, IReadOnlyList<BoundingBox> cartons, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<IReadOnlyList<LabelBox>>>([.. cartons.Select(_ => (IReadOnlyList<LabelBox>)[])]);
+}
+
 /// <summary>Katalog berisi satu model palsu (dan model default dari konfigurasi).</summary>
 public sealed class FakeModelCatalog : IModelCatalog
 {

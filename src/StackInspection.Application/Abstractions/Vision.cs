@@ -109,3 +109,17 @@ public interface ICartonEmbedder
     /// <summary>Satu vektor (panjang 1) per kotak, urutan sama dengan <paramref name="boxes"/>.</summary>
     Task<IReadOnlyList<float[]>> EmbedAsync(VisionImage image, IReadOnlyList<BoundingBox> boxes, CancellationToken cancellationToken);
 }
+
+/// <summary>Satu kotak label nomor SKU hasil label locator. <paramref name="Box"/> = koordinat foto.</summary>
+public sealed record LabelBox(BoundingBox Box, double Confidence);
+
+/// <summary>Label locator (Carton Trainer): mencari kotak label nomor SKU di setiap kardus.</summary>
+public interface ILabelLocator
+{
+    /// <summary>
+    /// Kotak label per kardus, urutan sama dengan <paramref name="cartons"/>. Daftar kosong = tidak ada label
+    /// ditemukan (atau model nonaktif/tidak ada).
+    /// </summary>
+    Task<IReadOnlyList<IReadOnlyList<LabelBox>>> LocateAsync(
+        VisionImage image, IReadOnlyList<BoundingBox> cartons, CancellationToken cancellationToken);
+}

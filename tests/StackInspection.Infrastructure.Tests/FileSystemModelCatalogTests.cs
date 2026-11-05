@@ -62,6 +62,22 @@ public sealed class FileSystemModelCatalogTests : IDisposable
     }
 
     [Fact]
+    public void LabelLocatorFolder_IsNotListed_ByTaskOrConfiguredName()
+    {
+        AddModel("carton-v1", card: null);
+        AddModel("label-loc-v1", """{"name":"label-loc-v1","classes":["carton"]}""");
+        AddModel("label-loc-v0", """{"name":"label-loc-v0","task":"label locator"}""");
+        FileSystemModelCatalog catalog = new(Options.Create(new VisionOptions
+        {
+            ModelsDirectory = _root, DefaultModel = "carton-v1", InputSize = 640, LabelLocatorModel = "label-loc-v1",
+        }));
+
+        DetectionModel model = Assert.Single(catalog.List());
+
+        Assert.Equal("carton-v1", model.Name);
+    }
+
+    [Fact]
     public void ModelWithoutCard_UsesDefaults_AndFolderWithoutOnnxIsIgnored()
     {
         AddModel("carton-v2", card: null);
