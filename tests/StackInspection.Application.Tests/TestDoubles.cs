@@ -64,6 +64,9 @@ internal sealed class StubReader(Dictionary<BoundingBox, (string? Label, string?
     /// </summary>
     public Dictionary<BoundingBox, (string Text, int MinWidth)> EnlargedOnly { get; } = [];
 
+    /// <summary>Teks di posisi bebas (koordinat foto), mis. label di kanan-bawah kardus.</summary>
+    public List<OcrText> Anywhere { get; } = [];
+
     public Task<IReadOnlyList<OcrText>> ReadAllAsync(
         VisionImage image, IReadOnlyList<BoundingBox> regions, int minAreaWidth, CancellationToken cancellationToken)
     {
@@ -87,6 +90,8 @@ internal sealed class StubReader(Dictionary<BoundingBox, (string? Label, string?
         result.AddRange(EnlargedOnly
             .Where(e => minAreaWidth > 0 && minAreaWidth >= e.Value.MinWidth)
             .Select(e => new OcrText(e.Value.Text, 0.9, new BoundingBox(e.Key.X1 + 10, e.Key.Y1 + 10, e.Key.X1 + 110, e.Key.Y1 + 40))));
+
+        result.AddRange(Anywhere);
 
         // seperti OCR asli: hanya teks yang titik tengahnya di dalam area yang diminta
         return Task.FromResult<IReadOnlyList<OcrText>>([.. result.Where(t => t.Box is BoundingBox b && regions.Any(r =>
@@ -112,6 +117,21 @@ internal sealed class StubEmbedder(Func<BoundingBox, float[]> vector) : ICartonE
     }
 }
 
+/// <summary>Label locator dengan kotak label tetap per kardus (dicocokkan dari kotak kardus).</summary>
+internal sealed class StubLocator(Dictionary<BoundingBox, BoundingBox> labels) : ILabelLocator
+{
+    public int Calls { get; private set; }
+
+    public Task<IReadOnlyList<IReadOnlyList<LabelBox>>> LocateAsync(
+        VisionImage image, IReadOnlyList<BoundingBox> cartons, CancellationToken cancellationToken)
+    {
+        Calls++;
+        return Task.FromResult<IReadOnlyList<IReadOnlyList<LabelBox>>>([.. cartons.Select(c => labels.TryGetValue(c, out BoundingBox label)
+            ? (IReadOnlyList<LabelBox>)[new LabelBox(label, 0.9)]
+            : [])]);
+    }
+}
+
 internal static class Build
 {
     public static readonly byte[] Jpeg = [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10];
@@ -130,7 +150,8 @@ internal static class Build
         ICartonEmbedder? embedder = null,
         bool ocrFullCartonFallback = false,
         IReadOnlyList<OcrScanOptions>? ocrRetryScans = null,
-        double majorityMaxConfidence = 1.0)
+        double majorityMaxConfidence = 1.0,
+        ILabelLocator? locator = null)
     {
         // gate fast reject dimatikan secara default supaya grid kecil di test lain tidak tertolak
         IOptions<PhotoOptions> photo = Options.Create(new PhotoOptions
@@ -150,10 +171,12 @@ internal static class Build
             new StubCatalog(),
             reader,
             embedder ?? new StubEmbedder(_ => []),
+            locator ?? new StubLocator([]),
             inspectability,
             Options.Create(new VisionOptions
             {
                 AppearanceModel = embedder is null ? string.Empty : "carton-embed-v1",
+                LabelLocatorModel = locator is null ? string.Empty : "label-loc-v1",
                 OcrFullCartonFallback = ocrFullCartonFallback,
                 OcrRetryScans = [.. ocrRetryScans ?? []],
                 MajorityMaxConfidence = majorityMaxConfidence,

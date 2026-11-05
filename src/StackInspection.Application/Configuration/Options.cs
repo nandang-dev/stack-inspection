@@ -136,6 +136,32 @@ public sealed class VisionOptions
     public string AppearanceModel { get; set; } = string.Empty;
 
     /// <summary>
+    /// Nama subfolder model label locator di <see cref="ModelsDirectory"/> (mis. <c>label-loc-v1</c>, Carton Trainer).
+    /// OCR tahap 0 membaca kotak label yang ditemukan model ini; kardus yang belum terbaca tetap dibaca dari area
+    /// label tetap dan <see cref="OcrRetryScans"/>. Kosong = nonaktif (perilaku sama seperti sebelum ada locator).
+    /// </summary>
+    public string LabelLocatorModel { get; set; } = string.Empty;
+
+    /// <summary>Skor minimal kotak label (objectness × skor kelas).</summary>
+    [Range(0.05, 1.0)]
+    public double LabelLocatorConfidence { get; set; } = 0.5;
+
+    /// <summary>
+    /// Margin area OCR di sekeliling kotak label (× sisi pendek kotak), di luar margin yang sudah ada di data
+    /// training. Area dipotong ke batas kardus. Tuning case 01: kotak label kadang memotong digit terakhir, 0,3 cukup
+    /// untuk menutupnya tanpa ikut membaca teks lain.
+    /// </summary>
+    [Range(0.0, 1.0)]
+    public double LabelLocatorMargin { get; set; } = 0.3;
+
+    /// <summary>
+    /// Kotak label (+ margin) yang lebih sempit dari ini (px) diperbesar sampai selebar ini sebelum OCR, maksimal
+    /// <see cref="OcrMaxUpscale"/> kali (sama seperti <see cref="OcrScanOptions.MinAreaWidth"/>). 0 = resolusi asli.
+    /// </summary>
+    [Range(0, 2000)]
+    public int LabelLocatorMinAreaWidth { get; set; } = 320;
+
+    /// <summary>
     /// Kemiripan tampilan (cosine) minimal ke kardus acuan. Tuning case 01: kardus SKU &amp; desain sama 0,84–0,95,
     /// SKU lain ≤ 0,75.
     /// </summary>

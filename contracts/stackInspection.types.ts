@@ -121,7 +121,9 @@ export interface CollectSkuTimingsDto {
   inspectMs: number;
   /** Deteksi kardus + filter kotak bersarang, gate hasil deteksi, filter lapisan depan. */
   detectMs: number;
-  /** OCR area label semua kardus (+ tahap 2 jika aktif), termasuk menunggu giliran OCR request lain. */
+  /** Label locator: mencari kotak label SKU di setiap kardus (0 jika nonaktif). */
+  labelLocateMs: number;
+  /** OCR kotak label + area label tetap (+ tahap 2 jika aktif), termasuk menunggu giliran OCR request lain. */
   ocrMs: number;
   /** Fuzzy match, koreksi mayoritas, potongan nomor, inferensi tampilan. */
   skuResolveMs: number;

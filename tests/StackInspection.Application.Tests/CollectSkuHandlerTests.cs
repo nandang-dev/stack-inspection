@@ -241,6 +241,47 @@ public class CollectSkuHandlerTests
     }
 
     [Fact]
+    public async Task LabelLocator_ReadsLabelOutsideFixedArea_AndSkipsFixedAreaForThatCarton()
+    {
+        // Carton(x, y) = 400 × 300; area label tetap = kiri-atas 60 % × 30 %. Label kardus ini di kanan-bawah.
+        CartonBox rightLabel = Build.Carton(300, 600);
+        CartonBox fixedLabel = Build.Carton(710, 600);
+        StubReader reader = new(new Dictionary<BoundingBox, (string?, string?)> { [fixedLabel.Box] = ("68582213", null) });
+        reader.Anywhere.Add(new OcrText("68410975", 0.95, new BoundingBox(560, 820, 680, 860)));
+        StubLocator locator = new(new Dictionary<BoundingBox, BoundingBox> { [rightLabel.Box] = new(550, 810, 690, 870) });
+        CollectSkuHandler handler = Build.Handler(
+            new StubDecoder(3000, 4000), new StubDetector([rightLabel, fixedLabel]), reader, locator: locator);
+
+        CollectSkuResponse result = await handler.HandleAsync(
+            new CollectSkuCommand(Build.Jpeg, ["68410975", "68582213"]), None);
+
+        Assert.Equal(1, locator.Calls);
+        // tahap 0: kotak label (+ margin, dipotong ke kardus) diperbesar; tahap 1: hanya kardus kedua
+        Assert.Equal([320, 0], reader.Scans);
+        Assert.Equal(LabelRegionOf(fixedLabel), Assert.Single(reader.LastRegions));
+        Dictionary<int, CellDto> byColumn = result.Cells.ToDictionary(c => c.Column);
+        Assert.Equal(("68410975", ReadStatus.Matched), (byColumn[0].Sku, byColumn[0].ReadStatus));
+        Assert.Equal(("68582213", ReadStatus.Matched), (byColumn[1].Sku, byColumn[1].ReadStatus));
+    }
+
+    [Fact]
+    public async Task LabelLocator_Disabled_ReadsFixedAreaOfAllCartonsLikeBefore()
+    {
+        CartonBox rightLabel = Build.Carton(300, 600);
+        StubReader reader = new([]);
+        reader.Anywhere.Add(new OcrText("68410975", 0.95, new BoundingBox(560, 820, 680, 860)));
+
+        CollectSkuResponse result = await Build.Handler(new StubDecoder(3000, 4000), new StubDetector([rightLabel]), reader)
+            .HandleAsync(new CollectSkuCommand(Build.Jpeg, ["68410975"]), None);
+
+        Assert.Equal([0], reader.Scans);
+        Assert.Equal(ReadStatus.LabelNotVisible, Assert.Single(result.Cells).ReadStatus);
+    }
+
+    private static BoundingBox LabelRegionOf(CartonBox carton) =>
+        new(carton.Box.X1, carton.Box.Y1, carton.Box.X1 + (carton.Box.Width * 0.6), carton.Box.Y1 + (carton.Box.Height * 0.3));
+
+    [Fact]
     public async Task OcrRetryScans_StopWhenAllCartonsRead()
     {
         CartonBox labelled = Build.Carton(300, 600);

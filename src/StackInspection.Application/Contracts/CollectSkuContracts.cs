@@ -165,9 +165,13 @@ public sealed class CollectSkuTimingsDto
     /// <summary>Deteksi kardus + filter kotak bersarang, gate hasil deteksi, dan filter lapisan depan.</summary>
     public long DetectMs { get; init; }
 
+    /// <summary>Label locator: mencari kotak label nomor SKU di setiap kardus (0 jika <c>Vision:LabelLocatorModel</c> kosong).</summary>
+    public long LabelLocateMs { get; init; }
+
     /// <summary>
-    /// OCR area label semua kardus (+ tahap 2 seluruh kardus jika <c>Vision:OcrFullCartonFallback</c> aktif),
-    /// termasuk menunggu giliran jika OCR sedang dipakai request lain.
+    /// OCR kotak label hasil label locator, lalu area label tetap untuk kardus yang belum terbaca (+ tahap 2 seluruh
+    /// kardus jika <c>Vision:OcrFullCartonFallback</c> aktif), termasuk menunggu giliran jika OCR sedang dipakai
+    /// request lain.
     /// </summary>
     public long OcrMs { get; init; }
 

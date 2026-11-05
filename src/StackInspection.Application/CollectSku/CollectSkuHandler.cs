@@ -35,6 +35,7 @@ public sealed partial class CollectSkuHandler
     private readonly IModelCatalog _models;
     private readonly ISkuLabelReader _reader;
     private readonly ICartonEmbedder _embedder;
+    private readonly ILabelLocator _locator;
     private readonly PhotoInspectabilityService _inspectability;
     private readonly VisionOptions _vision;
     private readonly FrontLayerOptions _frontLayer;
@@ -48,6 +49,7 @@ public sealed partial class CollectSkuHandler
         IModelCatalog models,
         ISkuLabelReader reader,
         ICartonEmbedder embedder,
+        ILabelLocator locator,
         PhotoInspectabilityService inspectability,
         IOptions<VisionOptions> vision,
         IOptions<FrontLayerOptions> frontLayer,
@@ -64,6 +66,7 @@ public sealed partial class CollectSkuHandler
         _models = models;
         _reader = reader;
         _embedder = embedder;
+        _locator = locator;
         _inspectability = inspectability;
         _vision = vision.Value;
         _frontLayer = frontLayer.Value;
@@ -107,15 +110,34 @@ public sealed partial class CollectSkuHandler
         }
 
         long filterMs = stopwatch.ElapsedMilliseconds;
-        // OCR tahap 1: hanya area label setiap kardus (kiri-atas)
-        IReadOnlyList<OcrText> texts = await _reader
-            .ReadAllAsync(
-                image,
-                [.. front.Kept.Select(c => LabelRegion(c.Box, _vision.LabelCropWidthRatio, _vision.LabelCropHeightRatio))],
-                0,
-                cancellationToken)
+        IReadOnlyList<IReadOnlyList<BoundingBox>> labels = await LocateLabelsAsync(image, front.Kept, cancellationToken)
             .ConfigureAwait(false);
-        IReadOnlyList<SkuReading> readings = [.. front.Kept.Select(c => ReadSku(c.Box, texts, candidates))];
+        long locateMs = stopwatch.ElapsedMilliseconds;
+        IReadOnlyList<OcrText> texts = [];
+        IReadOnlyList<SkuReading> ReadAll() => [.. front.Kept.Select((c, i) => ReadSku(c.Box, labels[i], texts, candidates))];
+
+        // OCR tahap 0: kotak label hasil label locator (di mana pun letaknya di kardus)
+        BoundingBox[] located = [.. labels.SelectMany(l => l)];
+        if (located.Length > 0)
+        {
+            texts = await _reader
+                .ReadAllAsync(image, located, _vision.LabelLocatorMinAreaWidth, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        IReadOnlyList<SkuReading> readings = ReadAll();
+
+        // OCR tahap 1: area label tetap (kiri-atas), hanya kardus yang belum terbaca dari kotak label
+        BoundingBox[] fixedAreas = [.. front.Kept
+            .Where((_, i) => readings[i].Status is not (ReadStatus.Matched or ReadStatus.Corrected))
+            .Select(c => LabelRegion(c.Box, _vision.LabelCropWidthRatio, _vision.LabelCropHeightRatio))];
+        if (fixedAreas.Length > 0)
+        {
+            IReadOnlyList<OcrText> more = await _reader.ReadAllAsync(image, fixedAreas, 0, cancellationToken).ConfigureAwait(false);
+            texts = [.. texts, .. more];
+            readings = ReadAll();
+        }
+
         foreach (OcrScanOptions scan in _vision.OcrRetryScans)
         {
             // OCR tahap 1b: kardus yang masih belum terbaca dibaca ulang dengan ukuran area/perbesaran scan ini
@@ -132,7 +154,7 @@ public sealed partial class CollectSkuHandler
                 .ReadAllAsync(image, unread, scan.MinAreaWidth, cancellationToken)
                 .ConfigureAwait(false);
             texts = [.. texts, .. more];
-            readings = [.. front.Kept.Select(c => ReadSku(c.Box, texts, candidates))];
+            readings = ReadAll();
         }
 
         if (_vision.OcrFullCartonFallback)
@@ -145,7 +167,7 @@ public sealed partial class CollectSkuHandler
             {
                 IReadOnlyList<OcrText> more = await _reader.ReadAllAsync(image, unread, 0, cancellationToken).ConfigureAwait(false);
                 texts = [.. texts, .. more];
-                readings = [.. front.Kept.Select(c => ReadSku(c.Box, texts, candidates))];
+                readings = ReadAll();
             }
         }
 
@@ -193,9 +215,11 @@ public sealed partial class CollectSkuHandler
             decodeMs,
             inspectMs - decodeMs,
             filterMs - inspectMs,
-            ocrMs - filterMs,
+            locateMs - filterMs,
+            ocrMs - locateMs,
             resolveMs - ocrMs,
             front.Kept.Count,
+            located.Length,
             texts.Count);
 
         GridLayout layout = GridBuilder.Build([.. front.Kept.Select(c => c.Box)]);
@@ -267,7 +291,8 @@ public sealed partial class CollectSkuHandler
                 DecodeMs = decodeMs,
                 InspectMs = inspectMs - decodeMs,
                 DetectMs = filterMs - inspectMs,
-                OcrMs = ocrMs - filterMs,
+                LabelLocateMs = locateMs - filterMs,
+                OcrMs = ocrMs - locateMs,
                 SkuResolveMs = resolveMs - ocrMs,
                 BuildMs = totalMs - resolveMs,
             },
@@ -306,11 +331,12 @@ public sealed partial class CollectSkuHandler
         new(box.X1, box.Y1, box.X1 + (box.Width * widthRatio), box.Y1 + (box.Height * heightRatio));
 
     /// <summary>
-    /// Teks yang titik tengahnya di area label dipakai lebih dulu; teks lain di dalam kardus sebagai fallback.
+    /// Urutan sumber teks: kotak label hasil label locator, lalu area label tetap, lalu teks lain di dalam kardus.
     /// </summary>
-    private SkuReading ReadSku(BoundingBox box, IReadOnlyList<OcrText> texts, string[] candidates)
+    private SkuReading ReadSku(BoundingBox box, IReadOnlyList<BoundingBox> located, IReadOnlyList<OcrText> texts, string[] candidates)
     {
         BoundingBox label = LabelRegion(box, _vision.LabelCropWidthRatio, _vision.LabelCropHeightRatio);
+        List<OcrText> locatedTexts = [];
         List<OcrText> labelTexts = [];
         List<OcrText> boxTexts = [];
         foreach (OcrText text in texts)
@@ -320,7 +346,20 @@ public sealed partial class CollectSkuHandler
                 continue;
             }
 
-            (Contains(label, position.CenterX, position.CenterY) ? labelTexts : boxTexts).Add(text);
+            if (located.Any(l => Contains(l, position.CenterX, position.CenterY)))
+            {
+                locatedTexts.Add(text);
+            }
+            else
+            {
+                (Contains(label, position.CenterX, position.CenterY) ? labelTexts : boxTexts).Add(text);
+            }
+        }
+
+        SkuReading? fromLocated = Resolve(locatedTexts, candidates);
+        if (fromLocated is { Status: ReadStatus.Matched or ReadStatus.Corrected })
+        {
+            return fromLocated;
         }
 
         SkuReading? fromLabel = Resolve(labelTexts, candidates);
@@ -336,7 +375,40 @@ public sealed partial class CollectSkuHandler
         }
 
         // Ada teks digit tapi tidak bisa dipastikan → UNKNOWN; tidak ada sama sekali → LABEL_NOT_VISIBLE.
-        return fromLabel ?? fromBox ?? new SkuReading(SkuCodes.LabelNotVisible, null, 0, ReadStatus.LabelNotVisible);
+        return fromLocated ?? fromLabel ?? fromBox ?? new SkuReading(SkuCodes.LabelNotVisible, null, 0, ReadStatus.LabelNotVisible);
+    }
+
+    /// <summary>
+    /// Area OCR kotak label per kardus: kotak label + <see cref="VisionOptions.LabelLocatorMargin"/>, dipotong ke batas
+    /// kardus. Kosong untuk semua kardus jika <see cref="VisionOptions.LabelLocatorModel"/> kosong.
+    /// </summary>
+    private async Task<IReadOnlyList<IReadOnlyList<BoundingBox>>> LocateLabelsAsync(
+        VisionImage image, IReadOnlyList<CartonBox> cartons, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(_vision.LabelLocatorModel))
+        {
+            return [.. cartons.Select(_ => (IReadOnlyList<BoundingBox>)[])];
+        }
+
+        IReadOnlyList<IReadOnlyList<LabelBox>> found = await _locator
+            .LocateAsync(image, [.. cartons.Select(c => c.Box)], cancellationToken)
+            .ConfigureAwait(false);
+        if (found.Count != cartons.Count)
+        {
+            return [.. cartons.Select(_ => (IReadOnlyList<BoundingBox>)[])];
+        }
+
+        return [.. cartons.Select((carton, i) => (IReadOnlyList<BoundingBox>)[.. found[i].Select(l => Expand(l.Box, carton.Box))])];
+    }
+
+    private BoundingBox Expand(BoundingBox label, BoundingBox carton)
+    {
+        double margin = Math.Min(label.Width, label.Height) * _vision.LabelLocatorMargin;
+        return new BoundingBox(
+            Math.Max(carton.X1, label.X1 - margin),
+            Math.Max(carton.Y1, label.Y1 - margin),
+            Math.Min(carton.X2, label.X2 + margin),
+            Math.Min(carton.Y2, label.Y2 + margin));
     }
 
     /// <summary>Semua string digit 7–9 karakter dari teks di dalam kardus (termasuk varian per kata).</summary>
@@ -544,9 +616,9 @@ public sealed partial class CollectSkuHandler
 
     [LoggerMessage(
         Level = LogLevel.Information,
-        Message = "Collect SKU timing: decode {DecodeMs} ms, inspect {InspectMs} ms, detect {DetectMs} ms, ocr {OcrMs} ms, sku {SkuResolveMs} ms ({Cartons} kardus, {Texts} teks)")]
+        Message = "Collect SKU timing: decode {DecodeMs} ms, inspect {InspectMs} ms, detect {DetectMs} ms, label {LabelLocateMs} ms, ocr {OcrMs} ms, sku {SkuResolveMs} ms ({Cartons} kardus, {Labels} label, {Texts} teks)")]
     private static partial void LogTimings(
-        ILogger logger, long decodeMs, long inspectMs, long detectMs, long ocrMs, long skuResolveMs, int cartons, int texts);
+        ILogger logger, long decodeMs, long inspectMs, long detectMs, long labelLocateMs, long ocrMs, long skuResolveMs, int cartons, int labels, int texts);
 
     [LoggerMessage(
         Level = LogLevel.Information,
