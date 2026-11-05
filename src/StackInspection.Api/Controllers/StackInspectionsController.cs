@@ -157,10 +157,10 @@ public sealed class StackInspectionsController : ControllerBase
     /// <summary>Preview dari hasil: render response Collect SKU yang sudah ada (mis. output LLM) tanpa foto.</summary>
     /// <remarks>
     /// Untuk memvalidasi hasil dari sumber lain dengan skema <c>CollectSkuResponse</c> yang sama, misalnya output
-    /// LLM pada benchmark (<c>brief/PROMPT-benchmark-llm-vs-api.md</c>). Body = <c>collectResult</c> (response
-    /// Collect SKU apa adanya), <c>masterSkus</c> opsional, dan <c>tokenUsage</c> opsional (token input/output
-    /// LLM; halaman menampilkan keduanya beserta totalnya). Tidak ada proses vision, sehingga cepat dan tidak
-    /// dibatasi antrean inspeksi.
+    /// LLM pada benchmark (<c>brief/PROMPT-benchmark-llm-vs-api.md</c>). <b>Body = response Collect SKU apa
+    /// adanya</b> (langsung tempel, tanpa dibungkus). Query opsional: <c>masterSkus</c> (JSON array, sama seperti
+    /// Preview) serta <c>inputTokens</c>/<c>outputTokens</c> (token LLM; halaman menampilkan keduanya beserta
+    /// totalnya). Tidak ada proses vision, sehingga cepat dan tidak dibatasi antrean inspeksi.
     /// <br/>Validasi lebih ketat dari Analyze karena hasilnya bukan dari Collect SKU: <c>imageWidth</c>/
     /// <c>imageHeight</c>/<c>rowCount</c>/<c>columnCount</c> &gt; 0, setiap sel di dalam grid (satu sel boleh
     /// berisi lebih dari satu dus, seperti output Collect SKU), entri ber-<c>id</c> sama berisi data sama, <c>restsOn</c> merujuk dus yang ada di bawahnya,
@@ -170,32 +170,35 @@ public sealed class StackInspectionsController : ControllerBase
     /// <b>Download file</b> pada hasil Execute lalu buka file <c>.html</c>-nya di browser. Panel foto hanya
     /// menampilkan kotak dus (foto asli tidak dikirim).
     /// </remarks>
-    /// <param name="request">Hasil Collect SKU, master SKU (opsional), dan pemakaian token LLM (opsional).</param>
+    /// <param name="collectResult">Response Collect SKU (atau output LLM berskema sama) apa adanya.</param>
+    /// <param name="request">Master SKU (opsional) dan pemakaian token LLM (opsional).</param>
     /// <response code="200">
     /// Halaman HTML mandiri (<c>text/html; charset=utf-8</c>, lampiran <c>stack-preview-{inspectionId}.html</c>),
     /// sama seperti endpoint Preview. Jika <c>masterSkus</c> diisi, halaman menampilkan skor dan pelanggaran
-    /// Analyze; jika kosong, hanya susunan dus. Jika <c>tokenUsage</c> diisi, ringkasan menampilkan Token input,
-    /// Token output, dan Total token (input + output).
+    /// Analyze; jika kosong, hanya susunan dus. Jika <c>inputTokens</c>/<c>outputTokens</c> diisi, ringkasan
+    /// menampilkan Token input, Token output, dan Total token (input + output).
     /// </response>
     /// <response code="400">
-    /// Body bukan JSON valid atau tidak sesuai skema (mis. <c>readStatus</c> tidak dikenal), <c>collectResult</c>
-    /// kosong/tidak konsisten (lihat aturan di atas), <c>masterSkus</c> tidak valid, atau token bernilai negatif.
+    /// Body bukan JSON valid atau tidak sesuai skema (mis. <c>readStatus</c> tidak dikenal), hasil Collect SKU
+    /// kosong/tidak konsisten (lihat aturan di atas), <c>masterSkus</c> bukan JSON/tidak valid, atau token bernilai negatif.
     /// </response>
     [HttpPost("preview-from-result")]
     [Consumes("application/json")]
     [Produces("text/html", "application/json")]
     [ProducesResponseType(typeof(string), StatusCodes.Status200OK, "text/html")]
     [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest, "application/json")]
-    [SwaggerRequestExample(typeof(StackPreviewFromResultRequest), typeof(StackPreviewFromResultRequestExample))]
-    public ContentResult PreviewFromResult([FromBody] StackPreviewFromResultRequest request)
+    [SwaggerRequestExample(typeof(CollectSkuResponse), typeof(PreviewFromResultBodyExample))]
+    public ContentResult PreviewFromResult(
+        [FromBody] CollectSkuResponse collectResult,
+        [FromQuery] StackPreviewFromResultRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
-        AnalyzeStackHandler.ValidateCollectResult(request.CollectResult);
-        CollectSkuResponse collect = request.CollectResult!;
-        AnalyzeStackResponse? analyze = request.MasterSkus is not { Count: > 0 } masters
+        List<MasterSkuDto> masters = ParseMasterSkus(request.MasterSkus);
+        AnalyzeStackHandler.ValidateCollectResult(collectResult);
+        AnalyzeStackResponse? analyze = masters.Count == 0
             ? null
-            : _analyze.Handle(new AnalyzeStackRequest { CollectResult = collect, MasterSkus = masters });
-        return HtmlAttachment(collect, analyze, request.TokenUsage);
+            : _analyze.Handle(new AnalyzeStackRequest { CollectResult = collectResult, MasterSkus = masters });
+        return HtmlAttachment(collectResult, analyze, request.ToTokenUsage());
     }
 
     private ContentResult HtmlAttachment(CollectSkuResponse collect, AnalyzeStackResponse? analyze, TokenUsageDto? tokenUsage = null)
