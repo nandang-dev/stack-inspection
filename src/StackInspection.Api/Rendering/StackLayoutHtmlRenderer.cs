@@ -92,6 +92,7 @@ public static class StackLayoutHtmlRenderer
         }
 
         html.Append("</dl>");
+        AppendTimings(html, collect);
         if (collect.Warnings.Count > 0)
         {
             html.Append("<div class=\"chips\">");
@@ -107,6 +108,38 @@ public static class StackLayoutHtmlRenderer
         {
             html.Append("<p class=\"muted\">masterSkus tidak diisi: skor dan pelanggaran tidak dihitung.</p>");
         }
+    }
+
+    /// <summary>
+    /// Rincian waktu per tahap (<c>timings</c>) beserta porsinya dari waktu proses, untuk membandingkan run tanpa
+    /// membuka JSON. Tidak ditampilkan jika semua tahap 0 (mis. hasil LLM di preview-from-result).
+    /// </summary>
+    private static void AppendTimings(StringBuilder html, CollectSkuResponse collect)
+    {
+        CollectSkuTimingsDto t = collect.Timings;
+        (string Label, long Ms)[] stages =
+        [
+            ("Decode", t.DecodeMs),
+            ("Cek foto", t.InspectMs),
+            ("Deteksi kardus", t.DetectMs),
+            ("Label locator", t.LabelLocateMs),
+            ("OCR", t.OcrMs),
+            ("Pencocokan SKU", t.SkuResolveMs),
+            ("Susun grid", t.BuildMs),
+        ];
+        if (stages.All(s => s.Ms <= 0))
+        {
+            return;
+        }
+
+        long total = Math.Max(1, collect.ProcessingTimeMs);
+        html.Append("<dl class=\"stats timings\">");
+        foreach ((string label, long ms) in stages)
+        {
+            Stat(html, label, $"{ms.ToString("N0", Invariant)} ms · {(100.0 * ms / total).ToString("0", Invariant)}%");
+        }
+
+        html.Append("</dl>");
     }
 
     private static void Stat(StringBuilder html, string label, string value) =>
