@@ -171,6 +171,21 @@ public sealed class VisionOptions
     public double LabelLocatorRotatedMinConfidence { get; set; } = 0.9;
 
     /// <summary>
+    /// Nama subfolder recognizer teks di <see cref="ModelsDirectory"/> (mis. <c>ppocr-rec-v4</c>: PP-OCRv4 rec ONNX,
+    /// PaddleOCR/Baidu, Apache 2.0). OCR tahap 0a membaca kotak label locator langsung dengan model ini tanpa deteksi
+    /// teks (puluhan kali lebih cepat dari Paddle penuh); kardus yang tidak terbaca yakin tetap dibaca Paddle.
+    /// Kosong = nonaktif. Butuh <see cref="LabelLocatorModel"/>.
+    /// </summary>
+    public string LabelRecognizerModel { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Hasil recognizer hanya dipakai jika keyakinannya ≥ nilai ini; di bawahnya kardus dibaca Paddle seperti biasa.
+    /// Tuning case 01: ≥ 0,95 → 36 benar, 0 salah; ≥ 0,9 → 43 benar, 5 salah.
+    /// </summary>
+    [Range(0.0, 1.0)]
+    public double LabelRecognizerMinConfidence { get; set; } = 0.95;
+
+    /// <summary>
     /// Kemiripan tampilan (cosine) minimal ke kardus acuan. Tuning case 01: kardus SKU &amp; desain sama 0,84–0,95,
     /// SKU lain ≤ 0,75.
     /// </summary>

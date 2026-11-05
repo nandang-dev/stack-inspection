@@ -37,6 +37,7 @@ public sealed partial class CollectSkuHandler
     private readonly ISkuLabelReader _reader;
     private readonly ICartonEmbedder _embedder;
     private readonly ILabelLocator _locator;
+    private readonly ITextLineRecognizer _recognizer;
     private readonly PhotoInspectabilityService _inspectability;
     private readonly VisionOptions _vision;
     private readonly FrontLayerOptions _frontLayer;
@@ -51,6 +52,7 @@ public sealed partial class CollectSkuHandler
         ISkuLabelReader reader,
         ICartonEmbedder embedder,
         ILabelLocator locator,
+        ITextLineRecognizer recognizer,
         PhotoInspectabilityService inspectability,
         IOptions<VisionOptions> vision,
         IOptions<FrontLayerOptions> frontLayer,
@@ -68,6 +70,7 @@ public sealed partial class CollectSkuHandler
         _reader = reader;
         _embedder = embedder;
         _locator = locator;
+        _recognizer = recognizer;
         _inspectability = inspectability;
         _vision = vision.Value;
         _frontLayer = frontLayer.Value;
@@ -111,24 +114,43 @@ public sealed partial class CollectSkuHandler
         }
 
         long filterMs = stopwatch.ElapsedMilliseconds;
-        IReadOnlyList<IReadOnlyList<BoundingBox>> labels = await LocateLabelsAsync(image, front.Kept, cancellationToken)
+        // Kotak label mentah (dipotong ke kardus) untuk recognizer; + margin untuk Paddle yang punya deteksi teks sendiri.
+        IReadOnlyList<IReadOnlyList<BoundingBox>> rawLabels = await LocateLabelsAsync(image, front.Kept, cancellationToken)
             .ConfigureAwait(false);
+        IReadOnlyList<IReadOnlyList<BoundingBox>> labels = [.. rawLabels.Select((l, i) =>
+            (IReadOnlyList<BoundingBox>)[.. l.Select(b => Expand(b, front.Kept[i].Box, _vision.LabelLocatorMargin))])];
         long locateMs = stopwatch.ElapsedMilliseconds;
         IReadOnlyList<OcrText> texts = [];
         IReadOnlyList<SkuReading> ReadAll() => [.. front.Kept.Select((c, i) => ReadSku(c.Box, labels[i], texts, candidates))];
+        IReadOnlyList<SkuReading> readings = ReadAll();
+        bool Unread(int i) => readings[i].Status is not (ReadStatus.Matched or ReadStatus.Corrected);
 
-        // OCR tahap 0: kotak label hasil label locator (di mana pun letaknya di kardus)
-        BoundingBox[] located = [.. labels.SelectMany(l => l)];
-        BoundingBox[] upright = [.. located.Where(l => !IsVertical(l))];
-        if (upright.Length > 0)
+        // OCR tahap 0a: recognizer langsung pada kotak label (tanpa deteksi teks, cepat); hanya hasil sangat yakin
+        // yang dipakai, sisanya tetap dibaca Paddle di bawah.
+        if (!string.IsNullOrWhiteSpace(_vision.LabelRecognizerModel) && rawLabels.Any(l => l.Count > 0))
         {
-            texts = await _reader
-                .ReadAllAsync(image, upright, _vision.LabelLocatorMinAreaWidth, cancellationToken)
-                .ConfigureAwait(false);
+            TextLineRegion[] lines = [.. rawLabels.SelectMany(l => l).SelectMany(b => IsVertical(b)
+                ? (TextLineRegion[])[new(b, TextLineRotation.Clockwise), new(b, TextLineRotation.CounterClockwise)]
+                : [new(b, TextLineRotation.None)])];
+            IReadOnlyList<OcrText> recognized = await _recognizer.RecognizeAsync(image, lines, cancellationToken).ConfigureAwait(false);
+            texts = [.. recognized.Where((t, i) => t.Confidence >= _vision.LabelRecognizerMinConfidence
+                && (lines[i].Rotation == TextLineRotation.None || IsConfidentRotatedRead(t)))];
+            readings = ReadAll();
         }
 
-        // OCR tahap 0b: label tegak (diputar 90°), dibaca setelah diputar ke dua arah; hanya angka yang meyakinkan
-        BoundingBox[] vertical = [.. located.Where(IsVertical)];
+        // OCR tahap 0b (Paddle): kotak label + margin, hanya kardus yang belum terbaca
+        BoundingBox[] located = [.. labels.SelectMany(l => l)];
+        BoundingBox[] upright = [.. labels.Where((_, i) => Unread(i)).SelectMany(l => l).Where(l => !IsVertical(l))];
+        if (upright.Length > 0)
+        {
+            IReadOnlyList<OcrText> more = await _reader
+                .ReadAllAsync(image, upright, _vision.LabelLocatorMinAreaWidth, cancellationToken)
+                .ConfigureAwait(false);
+            texts = [.. texts, .. more];
+        }
+
+        // OCR tahap 0c: label tegak (diputar 90°), dibaca setelah diputar ke dua arah; hanya angka yang meyakinkan
+        BoundingBox[] vertical = [.. labels.Where((_, i) => Unread(i)).SelectMany(l => l).Where(IsVertical)];
         if (vertical.Length > 0 && _vision.LabelLocatorRotatedMinConfidence > 0)
         {
             IReadOnlyList<OcrText> rotated = await _reader
@@ -137,7 +159,7 @@ public sealed partial class CollectSkuHandler
             texts = [.. texts, .. rotated.Where(IsConfidentRotatedRead)];
         }
 
-        IReadOnlyList<SkuReading> readings = ReadAll();
+        readings = ReadAll();
 
         // OCR tahap 1: area label tetap (kiri-atas), hanya kardus yang belum terbaca dari kotak label
         BoundingBox[] fixedAreas = [.. front.Kept
@@ -391,8 +413,8 @@ public sealed partial class CollectSkuHandler
     }
 
     /// <summary>
-    /// Area OCR kotak label per kardus: kotak label + <see cref="VisionOptions.LabelLocatorMargin"/>, dipotong ke batas
-    /// kardus. Kosong untuk semua kardus jika <see cref="VisionOptions.LabelLocatorModel"/> kosong.
+    /// Kotak label per kardus dari label locator, dipotong ke batas kardus (tanpa margin). Kosong untuk semua kardus
+    /// jika <see cref="VisionOptions.LabelLocatorModel"/> kosong.
     /// </summary>
     private async Task<IReadOnlyList<IReadOnlyList<BoundingBox>>> LocateLabelsAsync(
         VisionImage image, IReadOnlyList<CartonBox> cartons, CancellationToken cancellationToken)
@@ -410,7 +432,7 @@ public sealed partial class CollectSkuHandler
             return [.. cartons.Select(_ => (IReadOnlyList<BoundingBox>)[])];
         }
 
-        return [.. cartons.Select((carton, i) => (IReadOnlyList<BoundingBox>)[.. found[i].Select(l => Expand(l.Box, carton.Box))])];
+        return [.. cartons.Select((carton, i) => (IReadOnlyList<BoundingBox>)[.. found[i].Select(l => Expand(l.Box, carton.Box, 0))])];
     }
 
     /// <summary>Kotak label lebih tinggi daripada lebarnya = teks label diputar 90° (label mendatar selalu lebar).</summary>
@@ -427,9 +449,9 @@ public sealed partial class CollectSkuHandler
             .Select(word => word.Trim(LabelFramePunctuation))
             .Any(word => word.Length == SkuMatcher.SkuLength && word.All(char.IsAsciiDigit));
 
-    private BoundingBox Expand(BoundingBox label, BoundingBox carton)
+    private static BoundingBox Expand(BoundingBox label, BoundingBox carton, double marginRatio)
     {
-        double margin = Math.Min(label.Width, label.Height) * _vision.LabelLocatorMargin;
+        double margin = Math.Min(label.Width, label.Height) * marginRatio;
         return new BoundingBox(
             Math.Max(carton.X1, label.X1 - margin),
             Math.Max(carton.Y1, label.Y1 - margin),

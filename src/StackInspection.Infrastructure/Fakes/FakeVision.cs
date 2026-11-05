@@ -151,6 +151,14 @@ public sealed class FakeLabelLocator : ILabelLocator
         Task.FromResult<IReadOnlyList<IReadOnlyList<LabelBox>>>([.. cartons.Select(_ => (IReadOnlyList<LabelBox>)[])]);
 }
 
+/// <summary>Recognizer palsu: tidak membaca apa pun, sehingga semua kardus dibaca jalur OCR biasa.</summary>
+public sealed class FakeTextLineRecognizer : ITextLineRecognizer
+{
+    public Task<IReadOnlyList<OcrText>> RecognizeAsync(
+        VisionImage image, IReadOnlyList<TextLineRegion> regions, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<OcrText>>([.. regions.Select(r => new OcrText(string.Empty, 0, r.Box))]);
+}
+
 /// <summary>Katalog berisi satu model palsu (dan model default dari konfigurasi).</summary>
 public sealed class FakeModelCatalog : IModelCatalog
 {

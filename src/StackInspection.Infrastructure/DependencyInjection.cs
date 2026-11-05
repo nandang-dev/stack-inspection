@@ -28,6 +28,7 @@ public static class DependencyInjection
         services.AddSingleton<FakePhotoClassifier>();
         services.AddSingleton<FakeCartonEmbedder>();
         services.AddSingleton<FakeLabelLocator>();
+        services.AddSingleton<FakeTextLineRecognizer>();
 
         services.AddSingleton<OpenCvImageDecoder>();
         services.AddSingleton<OnnxCartonDetector>();
@@ -36,6 +37,7 @@ public static class DependencyInjection
         services.AddSingleton<OnnxPhotoClassifier>();
         services.AddSingleton<OnnxCartonEmbedder>();
         services.AddSingleton<OnnxLabelLocator>();
+        services.AddSingleton<OnnxTextLineRecognizer>();
 
         services.AddSingleton<IModelCatalog>(sp => UseFake(sp)
             ? sp.GetRequiredService<FakeModelCatalog>()
@@ -62,6 +64,9 @@ public static class DependencyInjection
         services.AddSingleton<ILabelLocator>(sp => UseFake(sp)
             ? sp.GetRequiredService<FakeLabelLocator>()
             : sp.GetRequiredService<OnnxLabelLocator>());
+        services.AddSingleton<ITextLineRecognizer>(sp => UseFake(sp)
+            ? sp.GetRequiredService<FakeTextLineRecognizer>()
+            : sp.GetRequiredService<OnnxTextLineRecognizer>());
         return services;
     }
 
