@@ -58,10 +58,12 @@ public sealed class FileSystemModelCatalog : IModelCatalog
         {
             string name = Path.GetFileName(folder);
             ModelCardFile? card = ReadCard(Path.Combine(folder, "model-card.json"));
-            if (IsAuxiliaryModel(card?.Task) || string.Equals(name, defaults.LabelLocatorModel, StringComparison.Ordinal))
+            if (IsAuxiliaryModel(card?.Task)
+                || string.Equals(name, defaults.LabelLocatorModel, StringComparison.Ordinal)
+                || string.Equals(name, defaults.LabelRecognizerModel, StringComparison.Ordinal))
             {
-                // classifier fast reject / embedder tampilan / label locator, bukan model deteksi kardus. Model card
-                // label locator dari Carton Trainer belum berisi task, jadi juga dikenali dari Vision:LabelLocatorModel.
+                // classifier fast reject / embedder tampilan / label locator / recognizer teks, bukan model deteksi
+                // kardus. Model card label locator dan recognizer belum tentu berisi task, jadi juga dikenali dari namanya.
                 continue;
             }
 
@@ -90,14 +92,15 @@ public sealed class FileSystemModelCatalog : IModelCatalog
     }
 
     /// <summary>
-    /// Model pendukung (Photo:ClassifierModel, Vision:AppearanceModel, Vision:LabelLocatorModel) yang tidak boleh muncul
+    /// Model pendukung (Photo:ClassifierModel, Vision:AppearanceModel, Vision:LabelLocatorModel, Vision:LabelRecognizerModel) yang tidak boleh muncul
     /// sebagai detektor.
     /// </summary>
     private static bool IsAuxiliaryModel(string? task) =>
         task is not null
         && (task.Contains("classifier", StringComparison.OrdinalIgnoreCase)
             || task.Contains("embedder", StringComparison.OrdinalIgnoreCase)
-            || task.Contains("locator", StringComparison.OrdinalIgnoreCase));
+            || task.Contains("locator", StringComparison.OrdinalIgnoreCase)
+            || task.Contains("recognizer", StringComparison.OrdinalIgnoreCase));
 
     private static ModelCardFile? ReadCard(string path)
     {

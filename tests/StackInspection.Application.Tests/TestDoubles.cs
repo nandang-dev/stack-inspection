@@ -147,6 +147,24 @@ internal sealed class StubLocator(Dictionary<BoundingBox, BoundingBox> labels) :
     }
 }
 
+/// <summary>Recognizer dengan hasil tetap per kotak label (dicocokkan dari titik tengah area).</summary>
+internal sealed class StubRecognizer(Dictionary<BoundingBox, (string Text, double Confidence)> reads) : ITextLineRecognizer
+{
+    public List<TextLineRegion> Regions { get; } = [];
+
+    public Task<IReadOnlyList<OcrText>> RecognizeAsync(
+        VisionImage image, IReadOnlyList<TextLineRegion> regions, CancellationToken cancellationToken)
+    {
+        Regions.AddRange(regions);
+        return Task.FromResult<IReadOnlyList<OcrText>>([.. regions.Select(r =>
+        {
+            (string text, double confidence) = reads.FirstOrDefault(e => r.Box.CenterX >= e.Key.X1 && r.Box.CenterX <= e.Key.X2
+                && r.Box.CenterY >= e.Key.Y1 && r.Box.CenterY <= e.Key.Y2).Value;
+            return new OcrText(text ?? string.Empty, confidence, r.Box);
+        })]);
+    }
+}
+
 internal static class Build
 {
     public static readonly byte[] Jpeg = [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10];
@@ -166,7 +184,8 @@ internal static class Build
         bool ocrFullCartonFallback = false,
         IReadOnlyList<OcrScanOptions>? ocrRetryScans = null,
         double majorityMaxConfidence = 1.0,
-        ILabelLocator? locator = null)
+        ILabelLocator? locator = null,
+        ITextLineRecognizer? recognizer = null)
     {
         // gate fast reject dimatikan secara default supaya grid kecil di test lain tidak tertolak
         IOptions<PhotoOptions> photo = Options.Create(new PhotoOptions
@@ -187,11 +206,13 @@ internal static class Build
             reader,
             embedder ?? new StubEmbedder(_ => []),
             locator ?? new StubLocator([]),
+            recognizer ?? new StubRecognizer([]),
             inspectability,
             Options.Create(new VisionOptions
             {
                 AppearanceModel = embedder is null ? string.Empty : "carton-embed-v1",
                 LabelLocatorModel = locator is null ? string.Empty : "label-loc-v1",
+                LabelRecognizerModel = recognizer is null ? string.Empty : "ppocr-rec-v4",
                 OcrFullCartonFallback = ocrFullCartonFallback,
                 OcrRetryScans = [.. ocrRetryScans ?? []],
                 MajorityMaxConfidence = majorityMaxConfidence,

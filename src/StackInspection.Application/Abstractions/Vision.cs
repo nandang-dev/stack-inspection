@@ -135,3 +135,34 @@ public interface ILabelLocator
     Task<IReadOnlyList<IReadOnlyList<LabelBox>>> LocateAsync(
         VisionImage image, IReadOnlyList<BoundingBox> cartons, CancellationToken cancellationToken);
 }
+
+/// <summary>Putaran potongan teks sebelum dikenali.</summary>
+public enum TextLineRotation
+{
+    /// <summary>Apa adanya (teks mendatar).</summary>
+    None,
+
+    /// <summary>Diputar 90° searah jarum jam.</summary>
+    Clockwise,
+
+    /// <summary>Diputar 90° berlawanan jarum jam.</summary>
+    CounterClockwise,
+}
+
+/// <summary>Satu potongan berisi satu baris teks (mis. kotak label hasil label locator), koordinat foto.</summary>
+public sealed record TextLineRegion(BoundingBox Box, TextLineRotation Rotation);
+
+/// <summary>
+/// Pengenal teks satu baris tanpa deteksi teks (recognizer saja): potongan sudah ditemukan label locator, jadi tahap
+/// deteksi teks yang berat dilewati.
+/// </summary>
+public interface ITextLineRecognizer
+{
+    /// <summary>
+    /// Satu hasil per area, urutan sama dengan <paramref name="regions"/>. <see cref="OcrText.Box"/> = area asal;
+    /// teks kosong dengan keyakinan 0 jika tidak terbaca atau model nonaktif.
+    /// </summary>
+    Task<IReadOnlyList<OcrText>> RecognizeAsync(
+        VisionImage image, IReadOnlyList<TextLineRegion> regions, CancellationToken cancellationToken);
+}
+
