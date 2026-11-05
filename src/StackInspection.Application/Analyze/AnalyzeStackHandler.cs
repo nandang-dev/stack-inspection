@@ -119,8 +119,9 @@ public sealed class AnalyzeStackHandler
 
     /// <summary>
     /// Validasi hasil Collect SKU dari luar (mis. LLM) untuk Preview tanpa foto (400). Aturan <c>cells</c> sama
-    /// dengan Analyze, ditambah hal yang selalu dijamin Collect SKU: ukuran foto dan grid, sel di dalam grid, satu
-    /// kardus per sel, kotak di dalam foto, dan <c>level</c> = 1 + level tertinggi di <c>restsOn</c>.
+    /// dengan Analyze, ditambah hal yang selalu dijamin Collect SKU: ukuran foto dan grid, sel di dalam grid, kotak di
+    /// dalam foto, dan <c>level</c> = 1 + level tertinggi di <c>restsOn</c>. Satu sel boleh berisi lebih dari satu
+    /// kardus: GridBuilder memberi kardus yang kalah rebutan sel tetap sel terbaiknya.
     /// </summary>
     public static void ValidateCollectResult(CollectSkuResponse? collect)
     {
@@ -141,7 +142,6 @@ public sealed class AnalyzeStackHandler
         }
 
         List<DetectedCell> cartons = ValidateCells(collect, errors);
-        Dictionary<(int Row, int Column), int> owners = [];
         for (int i = 0; i < collect.Cells.Count; i++)
         {
             CellDto c = collect.Cells[i];
@@ -150,15 +150,6 @@ public sealed class AnalyzeStackHandler
             if (c.Row < 0 || c.Row >= collect.RowCount || c.Column < 0 || c.Column >= collect.ColumnCount)
             {
                 AddError(errors, field, $"Sel id {id} row {c.Row} column {c.Column} di luar grid {collect.RowCount} x {collect.ColumnCount}.");
-            }
-
-            if (owners.TryGetValue((c.Row, c.Column), out int other) && other != id)
-            {
-                AddError(errors, field, $"Sel row {c.Row} column {c.Column} berisi dua kardus (id {other} dan {id}).");
-            }
-            else
-            {
-                owners[(c.Row, c.Column)] = id;
             }
         }
 

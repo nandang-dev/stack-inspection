@@ -162,8 +162,8 @@ public sealed class StackInspectionsController : ControllerBase
     /// LLM; halaman menampilkan keduanya beserta totalnya). Tidak ada proses vision, sehingga cepat dan tidak
     /// dibatasi antrean inspeksi.
     /// <br/>Validasi lebih ketat dari Analyze karena hasilnya bukan dari Collect SKU: <c>imageWidth</c>/
-    /// <c>imageHeight</c>/<c>rowCount</c>/<c>columnCount</c> &gt; 0, setiap sel di dalam grid, satu sel hanya berisi
-    /// satu dus, entri ber-<c>id</c> sama berisi data sama, <c>restsOn</c> merujuk dus yang ada di bawahnya,
+    /// <c>imageHeight</c>/<c>rowCount</c>/<c>columnCount</c> &gt; 0, setiap sel di dalam grid (satu sel boleh
+    /// berisi lebih dari satu dus, seperti output Collect SKU), entri ber-<c>id</c> sama berisi data sama, <c>restsOn</c> merujuk dus yang ada di bawahnya,
     /// <c>level</c> = 0 jika <c>restsOn</c> kosong atau 1 + level tertinggi di <c>restsOn</c>, dan
     /// <c>boundingBox</c> valid di dalam foto. Semua kesalahan dilaporkan sekaligus di 400.
     /// <br/>Response dikirim sebagai lampiran (<c>Content-Disposition: attachment</c>): di Swagger klik

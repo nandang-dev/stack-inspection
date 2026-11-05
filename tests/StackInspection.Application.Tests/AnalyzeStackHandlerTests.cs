@@ -247,13 +247,19 @@ public class AnalyzeStackHandlerTests
         AnalyzeStackHandler.ValidateCollectResult(PreviewCollect());
     }
 
+    [Fact]
+    public void ValidateCollectResult_TwoCartonsInOneCell_Passes()
+    {
+        // Output asli Collect SKU: kardus yang kalah rebutan sel tetap mendapat sel terbaiknya (berbagi sel).
+        AnalyzeStackHandler.ValidateCollectResult(PreviewCollect(c => c.Id == 42 ? With(c, row: 6) : c));
+    }
+
     public static TheoryData<string, string, CollectSkuResponse?> InvalidPreviewResults() => new()
     {
         { "collectResult", "wajib diisi", null },
         { "collectResult.imageWidth", "imageWidth dan imageHeight", PreviewCollect(imageWidth: 0) },
         { "collectResult.rowCount", "rowCount dan columnCount", PreviewCollect(rowCount: 0) },
         { "collectResult.cells[0]", "di luar grid", PreviewCollect(c => c.Id == 0 ? With(c, row: 8) : c) },
-        { "collectResult.cells[42]", "berisi dua kardus", PreviewCollect(c => c.Id == 42 ? With(c, row: 6) : c) },
         { "collectResult.cells", "seharusnya 7", PreviewCollect(c => c.Id == 0 ? With(c, level: 9) : c) },
         {
             "collectResult.cells",
