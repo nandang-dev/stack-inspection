@@ -136,6 +136,16 @@ public sealed class VisionOptions
     public string AppearanceModel { get; set; } = string.Empty;
 
     /// <summary>
+    /// SKU kembar: dua SKU terbaca di foto yang sama yang berselisih ≤ <see cref="MajorityMaxDistance"/> digit dan kardusnya
+    /// berkemiripan tampilan ≥ nilai ini dianggap produk yang sama (salah baca), lalu disatukan ke SKU yang lebih sering
+    /// terbaca (sama banyak: keyakinan OCR lebih tinggi). Lebih ketat dari <see cref="AppearanceMinSimilarity"/>: SKU
+    /// berbeda berdesain mirip (Rinso 65081657 vs 65081663) berkemiripan 0,66–0,75. Butuh <see cref="AppearanceModel"/>.
+    /// 0 = nonaktif.
+    /// </summary>
+    [Range(0.0, 1.0)]
+    public double AppearanceMergeMinSimilarity { get; set; } = 0.85;
+
+    /// <summary>
     /// Nama subfolder model label locator di <see cref="ModelsDirectory"/> (mis. <c>label-loc-v1</c>, Carton Trainer).
     /// OCR tahap 0 membaca kotak label yang ditemukan model ini; kardus yang belum terbaca tetap dibaca dari area
     /// label tetap dan <see cref="OcrRetryScans"/>. Kosong = nonaktif (perilaku sama seperti sebelum ada locator).

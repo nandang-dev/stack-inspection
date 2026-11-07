@@ -77,6 +77,71 @@ public sealed class SkuInferenceTests
         Assert.Equal(ReadStatus.LabelNotVisible, result[3].Status); // 2 lawan 1: belum cukup dominan
     }
 
+    private static SkuReading Read(string sku, double confidence) => new(sku, sku, confidence, ReadStatus.Matched);
+
+    [Fact]
+    public void SiblingMerge_SunsilkReadOncePerSku_MergesToMoreConfidentRead()
+    {
+        // tuning case 01: #16 65632159 (97%) dan #31 65632152 (88%), kardus Sunsilk sangat mirip (cos 10° ≈ 0,98)
+        SkuReading[] readings = [Read("65632159", 0.97), Read("65632152", 0.88), Read("64924088"), Read("64924088")];
+        float[][] vectors = [Angle(0), Angle(10), Angle(80), Angle(82)];
+
+        IReadOnlyList<SkuReading> result = SiblingSkuMerge.Apply(readings, vectors, [], 2, 0.85, 3, out var merges);
+
+        Assert.Equal(("65632159", ReadStatus.Corrected, "65632152"), (result[1].Sku, result[1].Status, result[1].OcrText));
+        Assert.Equal(new SiblingSkuMerge.Merge("65632152", "65632159", 1, 1, merges[0].Similarity), Assert.Single(merges));
+        Assert.Equal("64924088", result[2].Sku);
+    }
+
+    [Fact]
+    public void SiblingMerge_SimilarDigitsButDifferentLook_StaySeparate()
+    {
+        // Rinso Classic Fresh 65081657 vs Perfume Essence 65081663: beda 2 digit, kemiripan ±0,7 (cos 45°)
+        SkuReading[] readings = [Read("65081657"), Read("65081657"), Read("65081657"), Read("65081663")];
+        float[][] vectors = [Angle(0), Angle(2), Angle(4), Angle(45)];
+
+        IReadOnlyList<SkuReading> result = SiblingSkuMerge.Apply(readings, vectors, [], 2, 0.85, 3, out var merges);
+
+        Assert.Equal("65081663", result[3].Sku);
+        Assert.Empty(merges);
+    }
+
+    [Fact]
+    public void SiblingMerge_WeakSkuInCandidates_IsKept_AndMinorityMisreadJoinsMajority()
+    {
+        SkuReading[] readings = [Read("65590059"), Read("65590059"), Read("65590059"), Read("65590053", 0.98), Read("65590058")];
+        float[][] vectors = [Angle(0), Angle(3), Angle(6), Angle(4), Angle(5)];
+
+        IReadOnlyList<SkuReading> result = SiblingSkuMerge.Apply(readings, vectors, ["65590058"], 2, 0.85, 3, out _);
+
+        Assert.Equal(("65590059", ReadStatus.Corrected), (result[3].Sku, result[3].Status));
+        Assert.Equal(("65590058", ReadStatus.Matched), (result[4].Sku, result[4].Status)); // ada di candidateSkus
+    }
+
+    [Fact]
+    public void SiblingMerge_BalancedVariantsOfOneProductFamily_StaySeparate()
+    {
+        // data pre-label: 65730554 ×8 dan 65730557 ×11 di foto yang sama, desain kardus hampir sama
+        SkuReading[] readings = [.. Enumerable.Repeat(Read("65730554"), 8), .. Enumerable.Repeat(Read("65730557"), 11), Read("85730554")];
+        float[][] vectors = [.. Enumerable.Range(0, readings.Length).Select(i => Angle(i % 3))];
+
+        IReadOnlyList<SkuReading> result = SiblingSkuMerge.Apply(readings, vectors, [], 2, 0.85, 3, out var merges);
+
+        Assert.Equal(9, result.Count(r => r.Sku == "65730554"));  // 8 asli tidak dipindah ke 65730557 (8 vs 11) + 1 salah baca
+        Assert.Equal(11, result.Count(r => r.Sku == "65730557"));
+        Assert.Equal(("65730554", ReadStatus.Corrected), (result[^1].Sku, result[^1].Status)); // salah baca 6→8, 1 kardus
+        Assert.Single(merges);
+    }
+
+    [Fact]
+    public void SiblingMerge_WithoutEmbeddings_DoesNothing()
+    {
+        SkuReading[] readings = [Read("65632159", 0.97), Read("65632152", 0.88)];
+
+        Assert.Same(readings, SiblingSkuMerge.Apply(readings, [], [], 2, 0.85, 3, out var merges));
+        Assert.Empty(merges);
+    }
+
     [Fact]
     public void Appearance_NeedsTwoSimilarReferencesWithSameSku()
     {
