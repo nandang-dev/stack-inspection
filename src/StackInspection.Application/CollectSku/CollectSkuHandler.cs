@@ -138,12 +138,19 @@ public sealed partial class CollectSkuHandler
         bool paddle = _vision.PaddleOcrFallback;
         if (!string.IsNullOrWhiteSpace(_vision.LabelRecognizerModel) && rawLabels.Any(l => l.Count > 0))
         {
-            (TextLineRegion Line, int Carton, int Label)[] owned = [.. rawLabels.SelectMany((l, i) => l.SelectMany((b, j) => IsVertical(b)
-                ? (IEnumerable<(TextLineRegion, int, int)>)[(new(b, TextLineRotation.Clockwise), i, j), (new(b, TextLineRotation.CounterClockwise), i, j)]
-                : [(new(b, TextLineRotation.None), i, j)]))];
+            (TextLineRegion Line, int Carton, int Label, BoundingBox Box)[] owned = [.. rawLabels.SelectMany((l, i) => l.SelectMany((b, j) =>
+            {
+                // label yang terpotong tepi kotak kardus dibaca dari area yang diperluas ke luar kardus (foto tetap utuh)
+                BoundingBox area = ExtendCutLabel(b, front.Kept[i].Box, image.Width, image.Height);
+                return IsVertical(b)
+                    ? (IEnumerable<(TextLineRegion, int, int, BoundingBox)>)[(new(area, TextLineRotation.Clockwise), i, j, b), (new(area, TextLineRotation.CounterClockwise), i, j, b)]
+                    : [(new(area, TextLineRotation.None), i, j, b)];
+            }))];
             TextLineRegion[] lines = [.. owned.Select(o => o.Line)];
             long recognizeStart = stopwatch.ElapsedMilliseconds;
-            IReadOnlyList<OcrText> recognized = await _recognizer.RecognizeAsync(image, lines, cancellationToken).ConfigureAwait(false);
+            // posisi teks = kotak label asli (di dalam kardus) supaya tetap dicocokkan ke kardusnya
+            IReadOnlyList<OcrText> recognized = [.. (await _recognizer.RecognizeAsync(image, lines, cancellationToken).ConfigureAwait(false))
+                .Select((t, k) => t with { Box = owned[k].Box })];
             for (int k = 0; k < recognized.Count; k++)
             {
                 (int carton, int label) = (owned[k].Carton, owned[k].Label);
@@ -545,6 +552,38 @@ public sealed partial class CollectSkuHandler
         return [.. cartons.Select((carton, i) => (IReadOnlyList<LabelBox>)[.. found[i].Select(l => l with { Box = Expand(l.Box, carton.Box, 0) })])];
     }
 
+    /// <summary>Lebar ÷ tinggi kotak label mendatar yang utuh ±2,4–3,2; jauh di atas ini berarti label terpotong.</summary>
+    private const double CutLabelAspect = 4.0;
+
+    /// <summary>Lebar ÷ tinggi yang dipakai saat memperluas label terpotong.</summary>
+    private const double LabelAspect = 3.0;
+
+    /// <summary>
+    /// Kotak label mendatar yang menempel di tepi atas/bawah kardus dan terlalu pipih (lebar &gt; <see cref="CutLabelAspect"/>
+    /// × tinggi) adalah label yang terpotong kotak kardus dari detektor (tuning case 01 #25: kotak kardus mulai di tengah
+    /// label, kotak label hanya 62 × 11 px). Area baca diperluas ke luar kardus sampai proporsi label normal.
+    /// </summary>
+    private static BoundingBox ExtendCutLabel(BoundingBox label, BoundingBox carton, int imageWidth, int imageHeight)
+    {
+        if (IsVertical(label) || label.Width <= CutLabelAspect * label.Height)
+        {
+            return label;
+        }
+
+        double missing = (label.Width / LabelAspect) - label.Height;
+        double edge = Math.Max(2, label.Height * 0.2);
+        bool atTop = label.Y1 - carton.Y1 <= edge;
+        bool atBottom = carton.Y2 - label.Y2 <= edge;
+        if (atTop == atBottom)
+        {
+            return label; // tidak menempel tepi, atau menempel keduanya: tidak bisa ditentukan arahnya
+        }
+
+        return atTop
+            ? label with { Y1 = Math.Max(0, label.Y1 - missing) }
+            : label with { Y2 = Math.Min(imageHeight, label.Y2 + missing) };
+    }
+
     /// <summary>Kotak label lebih tinggi daripada lebarnya = teks label diputar 90° (label mendatar selalu lebar).</summary>
     private static bool IsVertical(BoundingBox label) => label.Height > label.Width;
 
@@ -611,7 +650,8 @@ public sealed partial class CollectSkuHandler
     /// <summary>Kardus tanpa SKU terbaca diberi SKU kardus lain yang tampilannya sangat mirip (Vision:Appearance*).</summary>
     /// <summary>
     /// SKU tebakan tidak bertentangan dengan angka yang terbaca di kardus itu sendiri: bacaan 7–9 digit berselisih
-    /// ≤ <see cref="VisionOptions.MajorityAppearanceMaxDistance"/>, potongan 5–6 digit harus bagian dari SKU. Kardus tanpa
+    /// ≤ <see cref="VisionOptions.MajorityAppearanceMaxDistance"/>, potongan 5–6 digit harus bagian dari SKU atau
+    /// urutan digit SKU dengan beberapa digit terlewat (tuning case 01: 655959 dan 65900 dari 65590059). Kardus tanpa
     /// angka terbaca selalu lolos.
     /// </summary>
     private bool ConsistentWithOwnDigits(BoundingBox box, IReadOnlyList<OcrText> texts, string sku)
@@ -619,7 +659,7 @@ public sealed partial class CollectSkuHandler
         string[] evidence = [.. DigitVariants(box, texts), .. PartialDigits(box, texts).Where(d => d.Length >= 5)];
         return evidence.Length == 0 || evidence.Any(e => e.Length >= MinSkuDigits
             ? SkuMatcher.Levenshtein(e, sku) <= Math.Max(_vision.MajorityAppearanceMaxDistance, _vision.MajorityMaxDistance)
-            : PartialReadMatch.IsPartOf(e, sku));
+            : PartialReadMatch.IsPartOf(e, sku) || PartialReadMatch.IsSubsequenceOf(e, sku));
     }
 
     private IReadOnlyList<SkuReading> InferByAppearance(
