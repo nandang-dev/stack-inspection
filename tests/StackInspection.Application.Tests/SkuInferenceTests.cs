@@ -32,6 +32,13 @@ public sealed class SkuInferenceTests
         Assert.Equal(expected, PartialReadMatch.IsPartOf(digits, sku));
 
     [Theory]
+    [InlineData("649558", "64955462", 6, true)]  // tuning case 01 #46: label tertutup lakban, digit ke-6 salah
+    [InlineData("649558", "64955462", 7, false)] // pelengkapan langsung: < 7 digit harus persis
+    [InlineData("649528", "64955462", 6, false)] // 2 digit berbeda
+    public void IsPartOf_OneMismatchThresholdIsConfigurable(string digits, string sku, int minDigits, bool expected) =>
+        Assert.Equal(expected, PartialReadMatch.IsPartOf(digits, sku, minDigits));
+
+    [Theory]
     [InlineData("655959", "65590059", true)]   // tuning case 01 #76: dua angka 0 terlewat
     [InlineData("65900", "65590059", true)]    // #58
     [InlineData("655959", "64955462", false)]
