@@ -151,6 +151,29 @@ public sealed class CollectSkuResponse
 
     /// <summary>Rincian waktu proses per tahap (ms); jumlahnya ≈ <c>processingTimeMs</c>.</summary>
     public CollectSkuTimingsDto Timings { get; init; } = new();
+
+    /// <summary>
+    /// Log server selama memproses foto ini (OCR per tahap, recognizer, fast reject, inferensi tampilan, peringatan
+    /// model tidak ditemukan, dll.), untuk analisis tanpa membuka log server. Hanya untuk diagnosis; isi dan formatnya
+    /// bisa berubah, jangan diproses otomatis oleh client.
+    /// </summary>
+    public IReadOnlyList<ProcessingLogDto> Logs { get; init; } = [];
+}
+
+/// <summary>Satu baris log proses.</summary>
+public sealed class ProcessingLogDto
+{
+    /// <summary>Waktu sejak proses dimulai (ms).</summary>
+    public long AtMs { get; init; }
+
+    /// <summary>Level log: <c>Information</c>, <c>Warning</c>, <c>Error</c>.</summary>
+    public string Level { get; init; } = string.Empty;
+
+    /// <summary>Komponen yang menulis log (mis. <c>CollectSkuHandler</c>, <c>PaddleOcrTextReader</c>).</summary>
+    public string Source { get; init; } = string.Empty;
+
+    /// <summary>Isi log.</summary>
+    public string Message { get; init; } = string.Empty;
 }
 
 /// <summary>Waktu eksekusi tiap tahap pipeline Collect SKU (ms).</summary>

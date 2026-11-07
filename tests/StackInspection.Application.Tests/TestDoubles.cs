@@ -165,6 +165,21 @@ internal sealed class StubRecognizer(Dictionary<BoundingBox, (string Text, doubl
     }
 }
 
+/// <summary>Penangkap log yang tidak menangkap apa pun (log diuji di integration test API).</summary>
+internal sealed class NoProcessingLog : IProcessingLog
+{
+    public IProcessingLogCapture Begin() => new Empty();
+
+    private sealed class Empty : IProcessingLogCapture
+    {
+        public IReadOnlyList<ProcessingLogEntry> Entries => [];
+
+        public void Dispose()
+        {
+        }
+    }
+}
+
 internal static class Build
 {
     public static readonly byte[] Jpeg = [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10];
@@ -185,7 +200,8 @@ internal static class Build
         IReadOnlyList<OcrScanOptions>? ocrRetryScans = null,
         double majorityMaxConfidence = 1.0,
         ILabelLocator? locator = null,
-        ITextLineRecognizer? recognizer = null)
+        ITextLineRecognizer? recognizer = null,
+        bool paddleOcrFallback = true)
     {
         // gate fast reject dimatikan secara default supaya grid kecil di test lain tidak tertolak
         IOptions<PhotoOptions> photo = Options.Create(new PhotoOptions
@@ -207,12 +223,14 @@ internal static class Build
             embedder ?? new StubEmbedder(_ => []),
             locator ?? new StubLocator([]),
             recognizer ?? new StubRecognizer([]),
+            new NoProcessingLog(),
             inspectability,
             Options.Create(new VisionOptions
             {
                 AppearanceModel = embedder is null ? string.Empty : "carton-embed-v1",
                 LabelLocatorModel = locator is null ? string.Empty : "label-loc-v1",
                 LabelRecognizerModel = recognizer is null ? string.Empty : "ppocr-rec-v4",
+                PaddleOcrFallback = paddleOcrFallback,
                 OcrFullCartonFallback = ocrFullCartonFallback,
                 OcrRetryScans = [.. ocrRetryScans ?? []],
                 MajorityMaxConfidence = majorityMaxConfidence,

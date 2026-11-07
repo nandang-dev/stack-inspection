@@ -52,6 +52,8 @@ public sealed class StackInspectionsApiTests : IClassFixture<StackInspectionsApi
                 ["Vision:UseFake"] = "true",
                 ["Vision:FakeFixturePath"] = FixturePath ?? "fixtures/reference-grid.json",
                 ["Swagger:Enabled"] = "true",
+                // vision palsu menyediakan teks lewat jalur OCR Paddle (recognizer palsu tidak membaca apa pun)
+                ["Vision:PaddleOcrFallback"] = "true",
                 ["AUTH_APIKeys"] = $"{ApiKey}, test-key-ai,",
             }));
         }
@@ -140,6 +142,21 @@ public sealed class StackInspectionsApiTests : IClassFixture<StackInspectionsApi
         Assert.Contains("<dt>Token input</dt><dd>2,140</dd>", html, StringComparison.Ordinal);
         Assert.Contains("<dt>Token output</dt><dd>31,870</dd>", html, StringComparison.Ordinal);
         Assert.Contains("<dt>Total token</dt><dd>34,010</dd>", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Collect_ReturnsRequestLogs_AndPreviewShowsThem()
+    {
+        using HttpClient client = _factory.CreateClient();
+
+        using HttpResponseMessage response = await client.PostAsync("/api/v1/stack-inspections/collect-sku", Upload(Jpeg));
+        CollectSkuResponse? collect = await response.Content.ReadFromJsonAsync<CollectSkuResponse>(Json);
+        using HttpResponseMessage preview = await client.PostAsync("/api/v1/stack-inspections/preview", Upload(Jpeg));
+        string html = await preview.Content.ReadAsStringAsync();
+
+        Assert.Contains(collect!.Logs, l => l.Source == "CollectSkuHandler" && l.Message.StartsWith("Collect SKU timing", StringComparison.Ordinal));
+        Assert.Contains(collect.Logs, l => l.Message.StartsWith("Hasil akhir per kardus", StringComparison.Ordinal));
+        Assert.Contains("<h2>Log proses</h2>", html, StringComparison.Ordinal);
     }
 
     [Fact]

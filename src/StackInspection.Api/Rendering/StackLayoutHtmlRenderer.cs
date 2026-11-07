@@ -56,6 +56,7 @@ public static class StackLayoutHtmlRenderer
         }
 
         AppendStacks(html, collect);
+        AppendLogs(html, collect);
         html.Append("</main><script>").Append(Script).Append("</script></body></html>");
         return html.ToString();
     }
@@ -279,6 +280,27 @@ public static class StackLayoutHtmlRenderer
         }
 
         html.Append("</ol></section>");
+    }
+
+    /// <summary>Log server selama proses (field <c>logs</c>), supaya analisis tidak perlu membuka log server.</summary>
+    private static void AppendLogs(StringBuilder html, CollectSkuResponse collect)
+    {
+        if (collect.Logs.Count == 0)
+        {
+            return;
+        }
+
+        html.Append("<section class=\"panel wide\"><h2>Log proses</h2><div class=\"table\"><table><thead><tr>")
+            .Append("<th>ms</th><th>Level</th><th>Sumber</th><th>Pesan</th></tr></thead><tbody>");
+        foreach (ProcessingLogDto log in collect.Logs)
+        {
+            bool warning = log.Level is "Warning" or "Error" or "Critical";
+            html.Append("<tr><td>").Append(log.AtMs.ToString("N0", Invariant)).Append("</td><td")
+                .Append(warning ? " class=\"bad\"" : string.Empty).Append('>').Append(E(log.Level)).Append("</td><td>")
+                .Append(E(log.Source)).Append("</td><td>").Append(E(log.Message)).Append("</td></tr>");
+        }
+
+        html.Append("</tbody></table></div></section>");
     }
 
     private static string Tooltip(Tile tile, Dictionary<int, List<ViolationDto>> violations)

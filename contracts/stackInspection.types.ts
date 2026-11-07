@@ -111,6 +111,19 @@ export interface CollectSkuResponse {
   processingTimeMs: number;
   /** Rincian waktu proses per tahap (ms); jumlahnya ≈ processingTimeMs. */
   timings: CollectSkuTimingsDto;
+  /** Log server selama proses ini, untuk diagnosis saja (format bisa berubah). */
+  logs: ProcessingLogDto[];
+}
+
+/** Satu baris log proses (diagnosis). */
+export interface ProcessingLogDto {
+  /** Waktu sejak proses dimulai (ms). */
+  atMs: number;
+  /** Information | Warning | Error. */
+  level: string;
+  /** Komponen penulis log, mis. CollectSkuHandler. */
+  source: string;
+  message: string;
 }
 
 /** Waktu eksekusi tiap tahap pipeline Collect SKU (ms). */
