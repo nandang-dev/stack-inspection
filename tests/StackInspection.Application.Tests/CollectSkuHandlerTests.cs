@@ -354,6 +354,34 @@ public class CollectSkuHandlerTests
     }
 
     [Fact]
+    public async Task CutLabelAtCartonTop_IsReadFromAreaExtendedAboveCarton_AndStaysWithItsCarton()
+    {
+        // tuning case 01 #25: kotak kardus mulai di tengah label, kotak label tinggal 62 × 11 px di tepi atas kardus
+        CartonBox cut = Build.Carton(300, 600);
+        CartonBox normal = Build.Carton(710, 600);
+        BoundingBox cutLabel = new(360, 600, 484, 620);     // 124 × 20: lebih pipih dari label biasa
+        BoundingBox normalLabel = new(770, 650, 890, 690);  // 120 × 40, di tengah kardus
+        StubRecognizer recognizer = new(new Dictionary<BoundingBox, (string, double)>
+        {
+            [new BoundingBox(360, 570, 484, 620)] = ("64924088", 0.99),
+            [normalLabel] = ("64924088", 0.99),
+        });
+        StubLocator locator = new(new Dictionary<BoundingBox, BoundingBox> { [cut.Box] = cutLabel, [normal.Box] = normalLabel });
+
+        CollectSkuResponse result = await Build.Handler(
+                new StubDecoder(3000, 4000), new StubDetector([cut, normal]), new StubReader([]),
+                locator: locator, recognizer: recognizer, paddleOcrFallback: false)
+            .HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None);
+
+        BoundingBox extended = recognizer.Regions[0].Box;
+        Assert.Equal((360, 484, 620), (extended.X1, extended.X2, extended.Y2));
+        Assert.InRange(extended.Y1, 578, 580); // 124 / 3 − 20 ≈ 21 px ke atas, sampai rasio label ~3 : 1
+        Assert.Equal(normalLabel, recognizer.Regions[1].Box);
+        Assert.All(result.Cells, c => Assert.Equal(("64924088", ReadStatus.Matched), (c.Sku, c.ReadStatus)));
+        Assert.Contains(result.LabelBoxes, l => l.BoundingBox.Y1 == cutLabel.Y1 && l.BoundingBox.Y2 == cutLabel.Y2 && l.Text == "64924088");
+    }
+
+    [Fact]
     public async Task SiblingSkus_SunsilkGroup_MergedThenPartialAndAppearanceResolve()
     {
         // tuning case 01: #16 65632159 (97%), #31 65632152 (88%), #30 "6563215", #39 tanpa bacaan; semua Sunsilk
