@@ -19,12 +19,18 @@ public static class AppearanceInference
     /// <param name="minSimilarity">Kemiripan (cosine) minimal ke kardus acuan.</param>
     /// <param name="minReferences">Jumlah kardus acuan ber-SKU sama yang harus lolos <paramref name="minSimilarity"/> (0 = nonaktif).</param>
     /// <param name="minMargin">Selisih kemiripan minimal antara SKU terbaik dan SKU lain.</param>
+    /// <param name="consistent">
+    /// Syarat per (indeks kardus, SKU tebakan): SKU tidak bertentangan dengan angka yang sudah terbaca di kardus itu
+    /// (tuning case 01: Molto terbaca <c>6871156</c> tidak boleh diberi SKU Sunlight 65590059 walau tampilannya mirip).
+    /// Jika gagal, kardus tidak diisi. null = tanpa syarat.
+    /// </param>
     public static IReadOnlyList<SkuReading> Apply(
         IReadOnlyList<SkuReading> readings,
         IReadOnlyList<float[]> embeddings,
         double minSimilarity,
         int minReferences,
-        double minMargin)
+        double minMargin,
+        Func<int, string, bool>? consistent = null)
     {
         ArgumentNullException.ThrowIfNull(readings);
         ArgumentNullException.ThrowIfNull(embeddings);
@@ -59,7 +65,7 @@ public static class AppearanceInference
             }
 
             double runnerUp = ranked.Length > 1 ? ranked[1].Value.Best : double.NegativeInfinity;
-            if (ranked[0].Value.Best - runnerUp >= minMargin)
+            if (ranked[0].Value.Best - runnerUp >= minMargin && (consistent is null || consistent(i, ranked[0].Key)))
             {
                 // Confidence = kemiripan tampilan ke acuan terbaik (bukan keyakinan OCR)
                 result[i] = readings[i] with { Sku = ranked[0].Key, Confidence = ranked[0].Value.Best, Status = ReadStatus.InferredByAppearance };

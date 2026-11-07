@@ -119,8 +119,11 @@ public sealed partial class CollectSkuHandler
 
         long filterMs = stopwatch.ElapsedMilliseconds;
         // Kotak label mentah (dipotong ke kardus) untuk recognizer; + margin untuk Paddle yang punya deteksi teks sendiri.
-        IReadOnlyList<IReadOnlyList<BoundingBox>> rawLabels = await LocateLabelsAsync(image, front.Kept, cancellationToken)
+        IReadOnlyList<IReadOnlyList<LabelBox>> locatedLabels = await LocateLabelsAsync(image, front.Kept, cancellationToken)
             .ConfigureAwait(false);
+        IReadOnlyList<IReadOnlyList<BoundingBox>> rawLabels = [.. locatedLabels.Select(l => (IReadOnlyList<BoundingBox>)[.. l.Select(b => b.Box)])];
+        // bacaan recognizer terbaik per kotak label (kardus, label) untuk diagnosis di response/preview
+        Dictionary<(int Carton, int Label), OcrText> labelReads = [];
         IReadOnlyList<IReadOnlyList<BoundingBox>> labels = [.. rawLabels.Select((l, i) =>
             (IReadOnlyList<BoundingBox>)[.. l.Select(b => Expand(b, front.Kept[i].Box, _vision.LabelLocatorMargin))])];
         long locateMs = stopwatch.ElapsedMilliseconds;
@@ -135,11 +138,21 @@ public sealed partial class CollectSkuHandler
         bool paddle = _vision.PaddleOcrFallback;
         if (!string.IsNullOrWhiteSpace(_vision.LabelRecognizerModel) && rawLabels.Any(l => l.Count > 0))
         {
-            TextLineRegion[] lines = [.. rawLabels.SelectMany(l => l).SelectMany(b => IsVertical(b)
-                ? (TextLineRegion[])[new(b, TextLineRotation.Clockwise), new(b, TextLineRotation.CounterClockwise)]
-                : [new(b, TextLineRotation.None)])];
+            (TextLineRegion Line, int Carton, int Label)[] owned = [.. rawLabels.SelectMany((l, i) => l.SelectMany((b, j) => IsVertical(b)
+                ? (IEnumerable<(TextLineRegion, int, int)>)[(new(b, TextLineRotation.Clockwise), i, j), (new(b, TextLineRotation.CounterClockwise), i, j)]
+                : [(new(b, TextLineRotation.None), i, j)]))];
+            TextLineRegion[] lines = [.. owned.Select(o => o.Line)];
             long recognizeStart = stopwatch.ElapsedMilliseconds;
             IReadOnlyList<OcrText> recognized = await _recognizer.RecognizeAsync(image, lines, cancellationToken).ConfigureAwait(false);
+            for (int k = 0; k < recognized.Count; k++)
+            {
+                (int carton, int label) = (owned[k].Carton, owned[k].Label);
+                if (!labelReads.TryGetValue((carton, label), out OcrText? best) || recognized[k].Confidence > best.Confidence)
+                {
+                    labelReads[(carton, label)] = recognized[k];
+                }
+            }
+
             double minConfidence = paddle ? _vision.LabelRecognizerMinConfidence : 0;
             texts = [.. recognized.Where((t, i) => t.Text.Length > 0 && t.Confidence >= minConfidence
                 && (lines[i].Rotation == TextLineRotation.None || IsConfidentRotatedRead(t)))];
@@ -256,6 +269,26 @@ public sealed partial class CollectSkuHandler
         // SKU kembar (beda sedikit digit, kardus sangat mirip) disatukan sebelum potongan dan inferensi tampilan memakai
         // SKU-SKU ini sebagai acuan; vektor tampilan juga dipakai koreksi mayoritas berdukungan tampilan di bawah.
         IReadOnlyList<float[]> embeddings = await EmbedAsync(image, front.Kept, readings, cancellationToken).ConfigureAwait(false);
+        bool reconstructed = false;
+        if (candidates.Length == 0 && _vision.AppearanceMergeMinSimilarity > 0)
+        {
+            // Bacaan yang kehilangan satu digit di kardus-kardus mirip → SKU utuh (mis. 6871156 + 6487156 → 64871156)
+            IReadOnlyList<SkuReading> rebuilt = SkuReconstruction.Apply(
+                readings,
+                [.. front.Kept.Select(c => DigitVariants(c.Box, texts))],
+                embeddings,
+                SkuMatcher.SkuLength,
+                _vision.AppearanceMergeMinSimilarity,
+                out IReadOnlyList<SkuReconstruction.Reconstruction> reconstructions);
+            foreach (SkuReconstruction.Reconstruction r in reconstructions)
+            {
+                LogReconstruction(_logger, r.Sku, string.Join(", ", r.Reads), r.Cartons);
+            }
+
+            reconstructed = reconstructions.Count > 0;
+            readings = rebuilt;
+        }
+
         if (_vision.AppearanceMergeMinSimilarity > 0)
         {
             IReadOnlyList<SkuReading> merged = SiblingSkuMerge.Apply(
@@ -282,7 +315,7 @@ public sealed partial class CollectSkuHandler
             _vision.PartialReadMinDigits,
             _vision.MajorityMinCount,
             _vision.MajorityDominance);
-        bool partialCorrected = completed.Where((r, i) => r != readings[i]).Any();
+        bool partialCorrected = reconstructed || completed.Where((r, i) => r != readings[i]).Any();
         readings = completed;
         if (candidates.Length == 0 && embeddings.Count == readings.Count && _vision.MajorityAppearanceMaxDistance > _vision.MajorityMaxDistance)
         {
@@ -300,7 +333,7 @@ public sealed partial class CollectSkuHandler
             readings = corrected;
         }
 
-        readings = InferByAppearance(readings, embeddings);
+        readings = InferByAppearance(readings, embeddings, (i, sku) => ConsistentWithOwnDigits(front.Kept[i].Box, texts, sku));
         long resolveMs = stopwatch.ElapsedMilliseconds;
         LogTimings(
             _logger,
@@ -385,6 +418,17 @@ public sealed partial class CollectSkuHandler
             DistinctSkus = distinctSkus,
             Warnings = warnings,
             ProcessingTimeMs = totalMs,
+            LabelBoxes = [.. locatedLabels
+                .SelectMany((l, i) => l.Select((label, j) => (Carton: i, Index: j, Label: label)))
+                .Select(x => new LabelBoxDto
+                {
+                    CartonId = ids[x.Carton],
+                    BoundingBox = ToDto(x.Label.Box),
+                    Confidence = Math.Round(x.Label.Confidence, 4),
+                    Text = labelReads.TryGetValue((x.Carton, x.Index), out OcrText? read) && read.Text.Length > 0 ? read.Text : null,
+                    TextConfidence = read is { Text.Length: > 0 } ? Math.Round(read.Confidence, 4) : 0,
+                })
+                .OrderBy(b => b.CartonId)],
             Logs = [.. capture.Entries.Select(e => new ProcessingLogDto { AtMs = e.AtMs, Level = e.Level, Source = e.Source, Message = e.Message })],
             Timings = new CollectSkuTimingsDto
             {
@@ -482,12 +526,12 @@ public sealed partial class CollectSkuHandler
     /// Kotak label per kardus dari label locator, dipotong ke batas kardus (tanpa margin). Kosong untuk semua kardus
     /// jika <see cref="VisionOptions.LabelLocatorModel"/> kosong.
     /// </summary>
-    private async Task<IReadOnlyList<IReadOnlyList<BoundingBox>>> LocateLabelsAsync(
+    private async Task<IReadOnlyList<IReadOnlyList<LabelBox>>> LocateLabelsAsync(
         VisionImage image, IReadOnlyList<CartonBox> cartons, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(_vision.LabelLocatorModel))
         {
-            return [.. cartons.Select(_ => (IReadOnlyList<BoundingBox>)[])];
+            return [.. cartons.Select(_ => (IReadOnlyList<LabelBox>)[])];
         }
 
         IReadOnlyList<IReadOnlyList<LabelBox>> found = await _locator
@@ -495,10 +539,10 @@ public sealed partial class CollectSkuHandler
             .ConfigureAwait(false);
         if (found.Count != cartons.Count)
         {
-            return [.. cartons.Select(_ => (IReadOnlyList<BoundingBox>)[])];
+            return [.. cartons.Select(_ => (IReadOnlyList<LabelBox>)[])];
         }
 
-        return [.. cartons.Select((carton, i) => (IReadOnlyList<BoundingBox>)[.. found[i].Select(l => Expand(l.Box, carton.Box, 0))])];
+        return [.. cartons.Select((carton, i) => (IReadOnlyList<LabelBox>)[.. found[i].Select(l => l with { Box = Expand(l.Box, carton.Box, 0) })])];
     }
 
     /// <summary>Kotak label lebih tinggi daripada lebarnya = teks label diputar 90° (label mendatar selalu lebar).</summary>
@@ -565,7 +609,21 @@ public sealed partial class CollectSkuHandler
     }
 
     /// <summary>Kardus tanpa SKU terbaca diberi SKU kardus lain yang tampilannya sangat mirip (Vision:Appearance*).</summary>
-    private IReadOnlyList<SkuReading> InferByAppearance(IReadOnlyList<SkuReading> readings, IReadOnlyList<float[]> embeddings)
+    /// <summary>
+    /// SKU tebakan tidak bertentangan dengan angka yang terbaca di kardus itu sendiri: bacaan 7–9 digit berselisih
+    /// ≤ <see cref="VisionOptions.MajorityAppearanceMaxDistance"/>, potongan 5–6 digit harus bagian dari SKU. Kardus tanpa
+    /// angka terbaca selalu lolos.
+    /// </summary>
+    private bool ConsistentWithOwnDigits(BoundingBox box, IReadOnlyList<OcrText> texts, string sku)
+    {
+        string[] evidence = [.. DigitVariants(box, texts), .. PartialDigits(box, texts).Where(d => d.Length >= 5)];
+        return evidence.Length == 0 || evidence.Any(e => e.Length >= MinSkuDigits
+            ? SkuMatcher.Levenshtein(e, sku) <= Math.Max(_vision.MajorityAppearanceMaxDistance, _vision.MajorityMaxDistance)
+            : PartialReadMatch.IsPartOf(e, sku));
+    }
+
+    private IReadOnlyList<SkuReading> InferByAppearance(
+        IReadOnlyList<SkuReading> readings, IReadOnlyList<float[]> embeddings, Func<int, string, bool> consistent)
     {
         if (embeddings.Count != readings.Count
             || !readings.Any(r => r.Status is ReadStatus.Unknown or ReadStatus.LabelNotVisible))
@@ -574,7 +632,7 @@ public sealed partial class CollectSkuHandler
         }
 
         IReadOnlyList<SkuReading> inferred = AppearanceInference.Apply(
-            readings, embeddings, _vision.AppearanceMinSimilarity, _vision.AppearanceMinReferences, _vision.AppearanceMinMargin);
+            readings, embeddings, _vision.AppearanceMinSimilarity, _vision.AppearanceMinReferences, _vision.AppearanceMinMargin, consistent);
         LogAppearance(
             _logger,
             inferred.Count(r => r.Status == ReadStatus.InferredByAppearance),
@@ -764,4 +822,9 @@ public sealed partial class CollectSkuHandler
         Level = LogLevel.Information,
         Message = "SKU kembar disatukan: {From} ({FromCount} kardus) → {To} ({ToCount} kardus), kemiripan tampilan {Similarity:0.00}")]
     private static partial void LogSiblingMerge(ILogger logger, string from, int fromCount, string to, int toCount, double similarity);
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "SKU direkonstruksi dari bacaan kurang satu digit: {Sku} ← {Reads} ({Cartons} kardus)")]
+    private static partial void LogReconstruction(ILogger logger, string sku, string reads, int cartons);
 }

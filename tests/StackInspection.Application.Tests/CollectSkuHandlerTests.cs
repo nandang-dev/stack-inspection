@@ -381,6 +381,61 @@ public class CollectSkuHandlerTests
     }
 
     [Fact]
+    public async Task Reconstruction_PepsodentBlock_RecoversFromWrongFullReadAndDroppedDigits()
+    {
+        // tuning case 01: #33 64955472 (salah, 97%), #42 6495562, #51 6495546 (sama-sama kurang angka 4), #34 potongan 64955
+        CartonBox[] pepsodent = [Build.Carton(300, 600), Build.Carton(710, 600), Build.Carton(1120, 600), Build.Carton(1530, 600)];
+        BoundingBox Label(CartonBox c) => new(c.Box.X1 + 10, c.Box.Y1 + 10, c.Box.X1 + 130, c.Box.Y1 + 50);
+        StubRecognizer recognizer = new(new Dictionary<BoundingBox, (string, double)>
+        {
+            [Label(pepsodent[0])] = ("64955472", 0.97),
+            [Label(pepsodent[1])] = ("6495562", 0.99),
+            [Label(pepsodent[2])] = ("6495546", 0.98),
+            [Label(pepsodent[3])] = ("64955", 0.90),
+        });
+
+        CollectSkuResponse result = await Build.Handler(
+                new StubDecoder(3000, 4000), new StubDetector(pepsodent), new StubReader([]),
+                embedder: new StubEmbedder(_ => [1f, 0f]),
+                locator: new StubLocator(pepsodent.ToDictionary(c => c.Box, Label)),
+                recognizer: recognizer,
+                paddleOcrFallback: false)
+            .HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None);
+
+        Assert.All(result.Cells, c => Assert.Equal("64955462", c.Sku));
+        Assert.All(result.Cells, c => Assert.Equal(ReadStatus.Corrected, c.ReadStatus));
+    }
+
+    [Fact]
+    public async Task LabelBoxes_ReportLocatorBoxAndBestRecognizerRead()
+    {
+        CartonBox upright = Build.Carton(300, 600);
+        CartonBox standing = Build.Carton(710, 600);
+        BoundingBox uprightLabel = new(560, 820, 680, 860);
+        BoundingBox standingLabel = new(1050, 650, 1090, 770);
+        StubRecognizer recognizer = new(new Dictionary<BoundingBox, (string, double)>
+        {
+            [uprightLabel] = ("6487156", 0.99),
+            [standingLabel] = ("65067525", 0.95),
+        });
+
+        CollectSkuResponse result = await Build.Handler(
+                new StubDecoder(3000, 4000), new StubDetector([upright, standing]), new StubReader([]),
+                locator: new StubLocator(new Dictionary<BoundingBox, BoundingBox> { [upright.Box] = uprightLabel, [standing.Box] = standingLabel }),
+                recognizer: recognizer,
+                paddleOcrFallback: false)
+            .HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None);
+
+        Assert.Equal(2, result.LabelBoxes.Count);
+        Dictionary<int, int> idByColumn = result.Cells.ToDictionary(c => c.Column, c => c.Id!.Value);
+        LabelBoxDto first = Assert.Single(result.LabelBoxes, b => b.CartonId == idByColumn[0]);
+        Assert.Equal(
+            (560, 820, 680, 860, 0.9, "6487156", 0.99),
+            (first.BoundingBox.X1, first.BoundingBox.Y1, first.BoundingBox.X2, first.BoundingBox.Y2, first.Confidence, first.Text, first.TextConfidence));
+        Assert.Equal("65067525", Assert.Single(result.LabelBoxes, b => b.CartonId == idByColumn[1]).Text);
+    }
+
+    [Fact]
     public async Task LabelRecognizer_VerticalLabel_TriesBothRotations()
     {
         CartonBox standing = Build.Carton(300, 600);

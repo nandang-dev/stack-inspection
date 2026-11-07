@@ -179,6 +179,22 @@ public sealed class StackInspectionsApiTests : IClassFixture<StackInspectionsApi
     }
 
     [Fact]
+    public async Task PreviewFromResult_WithLabelBoxes_DrawsThemOnPhoto()
+    {
+        using HttpClient client = _factory.CreateClient();
+        JsonNode body = JsonNode.Parse(await client.GetStringAsync("/swagger/v1/swagger.json"))!
+            ["paths"]!["/api/v1/stack-inspections/preview-from-result"]!["post"]!["requestBody"]!["content"]!["application/json"]!["example"]!
+            .DeepClone();
+        body["labelBoxes"] = JsonNode.Parse("""[{"cartonId":0,"boundingBox":{"x1":10,"y1":20,"x2":110,"y2":60},"confidence":0.9,"text":"6487156","textConfidence":0.99}]""");
+
+        using StringContent content = new(body.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
+        string html = await (await client.PostAsync("/api/v1/stack-inspections/preview-from-result", content)).Content.ReadAsStringAsync();
+
+        Assert.Contains("<rect class=\"label\" data-id=\"0\" x=\"10\" y=\"20\" width=\"100\" height=\"40\"", html, StringComparison.Ordinal);
+        Assert.Contains("Label #0: 6487156 (OCR 99%)", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task PreviewFromResult_WithoutTimings_HidesStageBreakdown()
     {
         using HttpClient client = _factory.CreateClient();
