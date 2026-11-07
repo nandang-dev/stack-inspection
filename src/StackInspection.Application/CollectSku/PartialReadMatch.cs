@@ -88,8 +88,35 @@ public static class PartialReadMatch
     }
 
     /// <summary>
+    /// Semua digit <paramref name="digits"/> muncul di <paramref name="sku"/> dengan urutan yang sama, boleh ada digit
+    /// SKU yang terlewat (OCR melewatkan beberapa digit: <c>655959</c> dari 65590059). Terlalu longgar untuk
+    /// melengkapi nomor sendiri; dipakai hanya sebagai syarat tidak-bertentangan untuk inferensi tampilan.
+    /// </summary>
+    public static bool IsSubsequenceOf(string digits, string sku)
+    {
+        ArgumentNullException.ThrowIfNull(digits);
+        ArgumentNullException.ThrowIfNull(sku);
+        if (digits.Length == 0 || digits.Length >= sku.Length)
+        {
+            return false;
+        }
+
+        int k = 0;
+        foreach (char c in sku)
+        {
+            if (k < digits.Length && digits[k] == c)
+            {
+                k++;
+            }
+        }
+
+        return k == digits.Length;
+    }
+
+    /// <summary>
     /// <paramref name="digits"/> sama dengan bagian berurutan <paramref name="sku"/> (lebih pendek dari SKU), dengan
-    /// toleransi 1 digit berbeda jika panjangnya ≥ <see cref="OneMismatchMinDigits"/>.
+    /// toleransi 1 digit berbeda jika panjangnya ≥ <see cref="OneMismatchMinDigits"/>; atau <paramref name="sku"/> dengan
+    /// tepat satu digit hilang (bacaan sepanjang SKU − 1).
     /// </summary>
     public static bool IsPartOf(string digits, string sku)
     {
@@ -98,6 +125,12 @@ public static class PartialReadMatch
         if (digits.Length == 0 || digits.Length >= sku.Length)
         {
             return false;
+        }
+
+        // OCR kadang melewatkan satu digit di tengah (tuning case 01: 6471156 = 64871156 tanpa angka 8)
+        if (digits.Length == sku.Length - 1 && SkuReconstruction.IsOneDeletion(digits, sku))
+        {
+            return true;
         }
 
         int allowed = digits.Length >= OneMismatchMinDigits ? 1 : 0;
