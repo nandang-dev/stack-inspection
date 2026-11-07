@@ -118,7 +118,10 @@ public static class PartialReadMatch
     /// toleransi 1 digit berbeda jika panjangnya ≥ <see cref="OneMismatchMinDigits"/>; atau <paramref name="sku"/> dengan
     /// tepat satu digit hilang (bacaan sepanjang SKU − 1).
     /// </summary>
-    public static bool IsPartOf(string digits, string sku)
+    /// <param name="digits">Potongan digit hasil OCR.</param>
+    /// <param name="sku">SKU acuan.</param>
+    /// <param name="oneMismatchMinDigits">Panjang minimal potongan yang boleh beda 1 digit.</param>
+    public static bool IsPartOf(string digits, string sku, int oneMismatchMinDigits = OneMismatchMinDigits)
     {
         ArgumentNullException.ThrowIfNull(digits);
         ArgumentNullException.ThrowIfNull(sku);
@@ -133,7 +136,7 @@ public static class PartialReadMatch
             return true;
         }
 
-        int allowed = digits.Length >= OneMismatchMinDigits ? 1 : 0;
+        int allowed = digits.Length >= oneMismatchMinDigits ? 1 : 0;
         for (int start = 0; start + digits.Length <= sku.Length; start++)
         {
             int mismatches = 0;

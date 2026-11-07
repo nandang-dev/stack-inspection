@@ -659,8 +659,14 @@ public sealed partial class CollectSkuHandler
         string[] evidence = [.. DigitVariants(box, texts), .. PartialDigits(box, texts).Where(d => d.Length >= 5)];
         return evidence.Length == 0 || evidence.Any(e => e.Length >= MinSkuDigits
             ? SkuMatcher.Levenshtein(e, sku) <= Math.Max(_vision.MajorityAppearanceMaxDistance, _vision.MajorityMaxDistance)
-            : PartialReadMatch.IsPartOf(e, sku) || PartialReadMatch.IsSubsequenceOf(e, sku));
+            : PartialReadMatch.IsPartOf(e, sku, GuardOneMismatchMinDigits) || PartialReadMatch.IsSubsequenceOf(e, sku));
     }
+
+    /// <summary>
+    /// Potongan 6 digit boleh beda 1 digit saat hanya menguji tidak-bertentangan (tuning case 01 #46: label Pepsodent
+    /// tertutup lakban terbaca <c>649558</c> ↔ 649554·62). Pelengkapan nomor langsung tetap mulai 7 digit.
+    /// </summary>
+    private const int GuardOneMismatchMinDigits = 6;
 
     private IReadOnlyList<SkuReading> InferByAppearance(
         IReadOnlyList<SkuReading> readings, IReadOnlyList<float[]> embeddings, Func<int, string, bool> consistent)
