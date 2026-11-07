@@ -133,6 +133,96 @@ public sealed class SkuInferenceTests
         Assert.Single(merges);
     }
 
+    private static SkuReading Short(string text, double confidence) => new(SkuCodes.Unknown, text, confidence, ReadStatus.Unknown);
+
+    [Fact]
+    public void Reconstruction_EqualSupportAndConfidence_BrokenByNearFullRead_OrSkipped()
+    {
+        IReadOnlyList<string>[] variants = [["64955472"], ["6495562"], ["6495546"], ["6495545"]];
+        float[][] vectors = [Angle(0), Angle(2), Angle(4), Angle(6)];
+        // ...62 dan ...65 sama-sama dari 2 bacaan berkeyakinan 0,95; bacaan utuh 64955472 hanya dekat ke ...62
+        SkuReading[] near = [Read("64955472", 0.97), Short("6495562", 0.95), Short("6495546", 0.95), Short("6495545", 0.95)];
+        Assert.Equal("64955462", Assert.Single(Found(near, variants, vectors)).Sku);
+
+        // tanpa bacaan utuh: benar-benar seri → tidak dipakai
+        SkuReading[] tied = [Read("65590059"), Short("6495562", 0.95), Short("6495546", 0.95), Short("6495545", 0.95)];
+        Assert.Empty(Found(tied, [["65590059"], ["6495562"], ["6495546"], ["6495545"]], [Angle(80), Angle(2), Angle(4), Angle(6)]));
+    }
+
+    private static IReadOnlyList<SkuReconstruction.Reconstruction> Found(
+        SkuReading[] readings, IReadOnlyList<string>[] variants, float[][] vectors)
+    {
+        SkuReconstruction.Apply(readings, variants, vectors, 8, 0.85, out var found);
+        return found;
+    }
+
+    [Theory]
+    [InlineData("6871156", "64871156", true)]   // angka 4 hilang (tuning case 01 #28)
+    [InlineData("6487156", "64871156", true)]   // satu angka 1 dari 11 hilang (#36)
+    [InlineData("4871156", "64871156", true)]   // digit pertama hilang
+    [InlineData("6487115", "64871156", true)]   // digit terakhir hilang
+    [InlineData("5457156", "64871156", false)]  // salah angka, bukan sekadar hilang
+    [InlineData("64871156", "64871156", false)] // panjang sama
+    public void Reconstruction_IsOneDeletion(string read, string sku, bool expected) =>
+        Assert.Equal(expected, SkuReconstruction.IsOneDeletion(read, sku));
+
+    [Fact]
+    public void Reconstruction_MoltoTwoReadsMissingDifferentDigits_GiveOneSku()
+    {
+        SkuReading[] readings = [Unknown("6871156"), Unknown("6487156"), Unknown("5457156"), Read("65590059")];
+        IReadOnlyList<string>[] variants = [["6871156"], ["6487156"], ["5457156"], ["65590059"]];
+        float[][] vectors = [Angle(0), Angle(5), Angle(8), Angle(60)];
+
+        IReadOnlyList<SkuReading> result = SkuReconstruction.Apply(readings, variants, vectors, 8, 0.85, out var found);
+
+        Assert.Equal(("64871156", ReadStatus.Corrected, "6871156"), (result[0].Sku, result[0].Status, result[0].OcrText));
+        Assert.Equal(("64871156", ReadStatus.Corrected), (result[1].Sku, result[1].Status));
+        Assert.Equal(ReadStatus.Unknown, result[2].Status); // 5457156 salah angka, bukan pendukung
+        Assert.Equal(["6871156", "6487156"], Assert.Single(found).Reads);
+    }
+
+    [Fact]
+    public void Reconstruction_EqualSupport_PicksCandidateWithMostConfidentReads()
+    {
+        // Pepsodent: 64955462 (#42 0,99 + #51 0,98), 64955465 (#43 0,97 + #51), 64955460 (#45 0,88 + #51);
+        // tanpa bacaan utuh sama sekali, keyakinan OCR yang menentukan
+        SkuReading[] readings = [Read("65590059"), Short("6495562", 0.99), Short("6495546", 0.98), Short("6495545", 0.97), Short("6495540", 0.88)];
+        IReadOnlyList<string>[] variants = [["65590059"], ["6495562"], ["6495546"], ["6495545"], ["6495540"]];
+        float[][] vectors = [Angle(80), Angle(2), Angle(4), Angle(6), Angle(8)];
+
+        IReadOnlyList<SkuReading> result = SkuReconstruction.Apply(readings, variants, vectors, 8, 0.85, out var found);
+
+        Assert.Equal("64955462", Assert.Single(found).Sku);
+        Assert.Equal(("64955462", "64955462"), (result[1].Sku, result[2].Sku));
+        Assert.Equal(ReadStatus.Unknown, result[3].Status); // sisanya diserahkan ke tahap berikutnya
+    }
+
+    [Fact]
+    public void Reconstruction_SingleReadOrDissimilarCartons_DoNothing()
+    {
+        SkuReading[] single = [Unknown("6563215"), Read("65590059")];
+        Assert.Same(single, SkuReconstruction.Apply(single, [["6563215"], ["65590059"]], [Angle(0), Angle(1)], 8, 0.85, out _));
+
+        SkuReading[] dissimilar = [Unknown("6871156"), Unknown("6487156")];
+        IReadOnlyList<SkuReading> result = SkuReconstruction.Apply(dissimilar, [["6871156"], ["6487156"]], [Angle(0), Angle(60)], 8, 0.85, out var found);
+        Assert.Empty(found);
+        Assert.All(result, r => Assert.Equal(ReadStatus.Unknown, r.Status));
+    }
+
+    [Fact]
+    public void Appearance_ConsistencyCheck_BlocksSkuThatContradictsOwnDigits()
+    {
+        // Molto mirip Sunlight secara tampilan, tetapi angkanya 6871156 jelas bukan 65590059
+        SkuReading[] readings = [Read("65590059"), Read("65590059"), Unknown("6871156"), NotVisible()];
+        float[][] vectors = [Angle(0), Angle(2), Angle(10), Angle(11)];
+
+        IReadOnlyList<SkuReading> result = AppearanceInference.Apply(
+            readings, vectors, 0.80, 1, 0.05, (i, sku) => i != 2 || sku != "65590059");
+
+        Assert.Equal(ReadStatus.Unknown, result[2].Status);
+        Assert.Equal(("65590059", ReadStatus.InferredByAppearance), (result[3].Sku, result[3].Status));
+    }
+
     [Fact]
     public void SiblingMerge_WithoutEmbeddings_DoesNothing()
     {

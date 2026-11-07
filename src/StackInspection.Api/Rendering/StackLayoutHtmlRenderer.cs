@@ -219,7 +219,20 @@ public static class StackLayoutHtmlRenderer
                 .Append("</title></rect>");
         }
 
-        html.Append("</svg><p class=\"muted\">Koordinat kotak asli di foto; garis = dus menumpu dus di bawahnya (restsOn).</p></section>");
+        // kotak label hasil label locator di atas kotak kardus; tooltip = teks yang dibaca recognizer dari kotak itu
+        foreach (LabelBoxDto label in collect.LabelBoxes)
+        {
+            BoundingBoxDto b = label.BoundingBox;
+            string read = label.Text is null ? "tidak terbaca" : $"{label.Text} (OCR {Percent(label.TextConfidence)})";
+            html.Append("<rect class=\"label\" data-id=\"").Append(label.CartonId).Append("\" x=\"").Append(b.X1).Append("\" y=\"")
+                .Append(b.Y1).Append("\" width=\"").Append(b.X2 - b.X1).Append("\" height=\"").Append(b.Y2 - b.Y1)
+                .Append("\" stroke-width=\"").Append(N(stroke * 0.6)).Append("\"><title>")
+                .Append(E($"Label #{label.CartonId}: {read} · skor locator {Percent(label.Confidence)}")).Append("</title></rect>");
+        }
+
+        html.Append("</svg><p class=\"muted\">Koordinat kotak asli di foto; garis = dus menumpu dus di bawahnya (restsOn)")
+            .Append(collect.LabelBoxes.Count > 0 ? "; kotak merah = label hasil label locator (arahkan kursor: teks yang dibaca OCR)" : string.Empty)
+            .Append(".</p></section>");
     }
 
     private static void AppendLegend(
@@ -402,6 +415,8 @@ public static class StackLayoutHtmlRenderer
         .box{fill:var(--sku);fill-opacity:.55;stroke:#222}
         .box.unread{fill:#bbb}.box.violation{stroke:var(--bad);stroke-width:6}
         .support{stroke:var(--support);stroke-linecap:round}
+        .label{fill:none;stroke:#e11d48;stroke-opacity:.9}
+        .label:hover{stroke:#0a84ff}
         .hl{filter:brightness(1.15);outline:3px solid #0a84ff !important;outline-offset:-3px}
         rect.hl{stroke:#0a84ff;stroke-width:10;fill-opacity:.85}
         .legend{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:6px}

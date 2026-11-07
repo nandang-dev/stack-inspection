@@ -113,6 +113,20 @@ export interface CollectSkuResponse {
   timings: CollectSkuTimingsDto;
   /** Log server selama proses ini, untuk diagnosis saja (format bisa berubah). */
   logs: ProcessingLogDto[];
+  /** Kotak label hasil label locator + teks yang dibaca OCR, untuk diagnosis saja. */
+  labelBoxes: LabelBoxDto[];
+}
+
+/** Satu kotak label hasil label locator (diagnosis). */
+export interface LabelBoxDto {
+  /** id kardus pemilik label (= cells[].id). */
+  cartonId: number;
+  boundingBox: BoundingBoxDto;
+  /** Skor label locator 0–1. */
+  confidence: number;
+  /** Teks yang dibaca OCR dari kotak ini; null = tidak terbaca. */
+  text: string | null;
+  textConfidence: number;
 }
 
 /** Satu baris log proses (diagnosis). */

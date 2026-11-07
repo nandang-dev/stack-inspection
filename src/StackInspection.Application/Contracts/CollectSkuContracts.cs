@@ -158,6 +158,31 @@ public sealed class CollectSkuResponse
     /// bisa berubah, jangan diproses otomatis oleh client.
     /// </summary>
     public IReadOnlyList<ProcessingLogDto> Logs { get; init; } = [];
+
+    /// <summary>
+    /// Kotak label nomor SKU hasil label locator beserta teks yang dibaca recognizer dari kotak itu, untuk memeriksa
+    /// apakah salah baca berasal dari posisi label atau dari OCR. Hanya untuk diagnosis; jangan diproses otomatis.
+    /// </summary>
+    public IReadOnlyList<LabelBoxDto> LabelBoxes { get; init; } = [];
+}
+
+/// <summary>Satu kotak label hasil label locator (diagnosis).</summary>
+public sealed class LabelBoxDto
+{
+    /// <summary><c>id</c> kardus pemilik label (sama dengan <c>cells[].id</c>).</summary>
+    public int CartonId { get; init; }
+
+    /// <summary>Kotak label di koordinat foto (dipotong ke kotak kardus).</summary>
+    public BoundingBoxDto BoundingBox { get; init; } = new();
+
+    /// <summary>Skor label locator 0–1.</summary>
+    public double Confidence { get; init; }
+
+    /// <summary>Teks yang dibaca recognizer dari kotak ini (label tegak: putaran berkeyakinan tertinggi); null = tidak terbaca.</summary>
+    public string? Text { get; init; }
+
+    /// <summary>Keyakinan recognizer 0–1 untuk <see cref="Text"/>.</summary>
+    public double TextConfidence { get; init; }
 }
 
 /// <summary>Satu baris log proses.</summary>
