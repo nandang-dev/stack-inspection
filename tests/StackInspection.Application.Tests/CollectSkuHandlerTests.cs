@@ -354,6 +354,33 @@ public class CollectSkuHandlerTests
     }
 
     [Fact]
+    public async Task SiblingSkus_SunsilkGroup_MergedThenPartialAndAppearanceResolve()
+    {
+        // tuning case 01: #16 65632159 (97%), #31 65632152 (88%), #30 "6563215", #39 tanpa bacaan; semua Sunsilk
+        CartonBox[] sunsilk = [Build.Carton(300, 600), Build.Carton(710, 600), Build.Carton(1120, 600), Build.Carton(1530, 600)];
+        BoundingBox Label(CartonBox c) => new(c.Box.X1 + 10, c.Box.Y1 + 10, c.Box.X1 + 130, c.Box.Y1 + 50);
+        StubRecognizer recognizer = new(new Dictionary<BoundingBox, (string, double)>
+        {
+            [Label(sunsilk[0])] = ("65632159", 0.97),
+            [Label(sunsilk[1])] = ("65632152", 0.88),
+            [Label(sunsilk[2])] = ("6563215", 0.90),
+        });
+        StubLocator locator = new(sunsilk.ToDictionary(c => c.Box, Label));
+
+        CollectSkuResponse result = await Build.Handler(
+                new StubDecoder(3000, 4000), new StubDetector(sunsilk), new StubReader([]),
+                embedder: new StubEmbedder(_ => [1f, 0f]), locator: locator, recognizer: recognizer, paddleOcrFallback: false)
+            .HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None);
+
+        Dictionary<int, CellDto> byColumn = result.Cells.ToDictionary(c => c.Column);
+        Assert.All(byColumn.Values, c => Assert.Equal("65632159", c.Sku));
+        Assert.Equal(
+            [ReadStatus.Matched, ReadStatus.Corrected, ReadStatus.Corrected, ReadStatus.InferredByAppearance],
+            byColumn.OrderBy(c => c.Key).Select(c => c.Value.ReadStatus));
+        Assert.Contains("SKU_CORRECTED_BY_MAJORITY", result.Warnings);
+    }
+
+    [Fact]
     public async Task LabelRecognizer_VerticalLabel_TriesBothRotations()
     {
         CartonBox standing = Build.Carton(300, 600);

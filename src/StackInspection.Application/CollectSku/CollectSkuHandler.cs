@@ -253,6 +253,28 @@ public sealed partial class CollectSkuHandler
             readings = corrected;
         }
 
+        // SKU kembar (beda sedikit digit, kardus sangat mirip) disatukan sebelum potongan dan inferensi tampilan memakai
+        // SKU-SKU ini sebagai acuan; vektor tampilan juga dipakai koreksi mayoritas berdukungan tampilan di bawah.
+        IReadOnlyList<float[]> embeddings = await EmbedAsync(image, front.Kept, readings, cancellationToken).ConfigureAwait(false);
+        if (_vision.AppearanceMergeMinSimilarity > 0)
+        {
+            IReadOnlyList<SkuReading> merged = SiblingSkuMerge.Apply(
+                readings,
+                embeddings,
+                candidates,
+                _vision.MajorityMaxDistance,
+                _vision.AppearanceMergeMinSimilarity,
+                _vision.MajorityDominance,
+                out IReadOnlyList<SiblingSkuMerge.Merge> merges);
+            foreach (SiblingSkuMerge.Merge merge in merges)
+            {
+                LogSiblingMerge(_logger, merge.From, merge.FromCount, merge.To, merge.ToCount, merge.Similarity);
+            }
+
+            majorityCorrected |= merges.Count > 0;
+            readings = merged;
+        }
+
         IReadOnlyList<SkuReading> completed = PartialReadMatch.Apply(
             readings,
             [.. front.Kept.Select(c => PartialDigits(c.Box, texts))],
@@ -262,7 +284,6 @@ public sealed partial class CollectSkuHandler
             _vision.MajorityDominance);
         bool partialCorrected = completed.Where((r, i) => r != readings[i]).Any();
         readings = completed;
-        IReadOnlyList<float[]> embeddings = await EmbedAsync(image, front.Kept, readings, cancellationToken).ConfigureAwait(false);
         if (candidates.Length == 0 && embeddings.Count == readings.Count && _vision.MajorityAppearanceMaxDistance > _vision.MajorityMaxDistance)
         {
             // Salah baca lebih dari MajorityMaxDistance digit tetap dikoreksi jika tampilannya mirip kardus mayoritas.
@@ -738,4 +759,9 @@ public sealed partial class CollectSkuHandler
         Level = LogLevel.Information,
         Message = "Hasil akhir per kardus: Matched {Matched}, Corrected {Corrected}, InferredByAppearance {Inferred}, Unknown {Unknown}, LabelNotVisible {NotVisible}")]
     private static partial void LogResult(ILogger logger, int matched, int corrected, int inferred, int unknown, int notVisible);
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "SKU kembar disatukan: {From} ({FromCount} kardus) → {To} ({ToCount} kardus), kemiripan tampilan {Similarity:0.00}")]
+    private static partial void LogSiblingMerge(ILogger logger, string from, int fromCount, string to, int toCount, double similarity);
 }
