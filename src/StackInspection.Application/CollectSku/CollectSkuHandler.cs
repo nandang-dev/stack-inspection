@@ -38,6 +38,7 @@ public sealed partial class CollectSkuHandler
     private readonly ICartonEmbedder _embedder;
     private readonly ILabelLocator _locator;
     private readonly ITextLineRecognizer _recognizer;
+    private readonly IProcessingLog _processingLog;
     private readonly PhotoInspectabilityService _inspectability;
     private readonly VisionOptions _vision;
     private readonly FrontLayerOptions _frontLayer;
@@ -53,6 +54,7 @@ public sealed partial class CollectSkuHandler
         ICartonEmbedder embedder,
         ILabelLocator locator,
         ITextLineRecognizer recognizer,
+        IProcessingLog processingLog,
         PhotoInspectabilityService inspectability,
         IOptions<VisionOptions> vision,
         IOptions<FrontLayerOptions> frontLayer,
@@ -71,6 +73,7 @@ public sealed partial class CollectSkuHandler
         _embedder = embedder;
         _locator = locator;
         _recognizer = recognizer;
+        _processingLog = processingLog;
         _inspectability = inspectability;
         _vision = vision.Value;
         _frontLayer = frontLayer.Value;
@@ -82,6 +85,7 @@ public sealed partial class CollectSkuHandler
     public async Task<CollectSkuResponse> HandleAsync(CollectSkuCommand command, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
+        using IProcessingLogCapture capture = _processingLog.Begin();
         Stopwatch stopwatch = Stopwatch.StartNew();
         ValidateUpload(command.Image);
         string[] candidates = NormalizeCandidates(command.CandidateSkus);
@@ -125,83 +129,111 @@ public sealed partial class CollectSkuHandler
         IReadOnlyList<SkuReading> readings = ReadAll();
         bool Unread(int i) => readings[i].Status is not (ReadStatus.Matched or ReadStatus.Corrected);
 
-        // OCR tahap 0a: recognizer langsung pada kotak label (tanpa deteksi teks, cepat); hanya hasil sangat yakin
-        // yang dipakai, sisanya tetap dibaca Paddle di bawah.
+        // OCR tahap 0a: recognizer langsung pada kotak label (tanpa deteksi teks, cepat). Dengan cadangan Paddle hanya
+        // hasil sangat yakin yang dipakai (sisanya dibaca Paddle); tanpa Paddle semua hasil dipakai dan bacaan yang ragu
+        // disaring oleh koreksi mayoritas / pelengkapan potongan seperti bacaan OCR biasa.
+        bool paddle = _vision.PaddleOcrFallback;
         if (!string.IsNullOrWhiteSpace(_vision.LabelRecognizerModel) && rawLabels.Any(l => l.Count > 0))
         {
             TextLineRegion[] lines = [.. rawLabels.SelectMany(l => l).SelectMany(b => IsVertical(b)
                 ? (TextLineRegion[])[new(b, TextLineRotation.Clockwise), new(b, TextLineRotation.CounterClockwise)]
                 : [new(b, TextLineRotation.None)])];
+            long recognizeStart = stopwatch.ElapsedMilliseconds;
             IReadOnlyList<OcrText> recognized = await _recognizer.RecognizeAsync(image, lines, cancellationToken).ConfigureAwait(false);
-            texts = [.. recognized.Where((t, i) => t.Confidence >= _vision.LabelRecognizerMinConfidence
+            double minConfidence = paddle ? _vision.LabelRecognizerMinConfidence : 0;
+            texts = [.. recognized.Where((t, i) => t.Text.Length > 0 && t.Confidence >= minConfidence
                 && (lines[i].Rotation == TextLineRotation.None || IsConfidentRotatedRead(t)))];
             readings = ReadAll();
+            LogRecognizer(
+                _logger,
+                _vision.LabelRecognizerModel,
+                lines.Length,
+                recognized.Count(t => t.Text.Length > 0),
+                texts.Count,
+                minConfidence,
+                readings.Count(r => r.Status is ReadStatus.Matched or ReadStatus.Corrected),
+                readings.Count,
+                stopwatch.ElapsedMilliseconds - recognizeStart);
         }
 
-        // OCR tahap 0b (Paddle): kotak label + margin, hanya kardus yang belum terbaca
+        if (!paddle)
+        {
+            LogNoPaddle(_logger, readings.Count(r => r.Status is not (ReadStatus.Matched or ReadStatus.Corrected)));
+        }
+
         BoundingBox[] located = [.. labels.SelectMany(l => l)];
-        BoundingBox[] upright = [.. labels.Where((_, i) => Unread(i)).SelectMany(l => l).Where(l => !IsVertical(l))];
-        if (upright.Length > 0)
+        if (paddle)
         {
-            IReadOnlyList<OcrText> more = await _reader
-                .ReadAllAsync(image, upright, _vision.LabelLocatorMinAreaWidth, cancellationToken)
-                .ConfigureAwait(false);
-            texts = [.. texts, .. more];
+            await ReadWithPaddleAsync().ConfigureAwait(false);
         }
 
-        // OCR tahap 0c: label tegak (diputar 90°), dibaca setelah diputar ke dua arah; hanya angka yang meyakinkan
-        BoundingBox[] vertical = [.. labels.Where((_, i) => Unread(i)).SelectMany(l => l).Where(IsVertical)];
-        if (vertical.Length > 0 && _vision.LabelLocatorRotatedMinConfidence > 0)
+        // Cadangan Paddle (Vision:PaddleOcrFallback): kardus yang belum terbaca dibaca ulang dalam beberapa putaran.
+        async Task ReadWithPaddleAsync()
         {
-            IReadOnlyList<OcrText> rotated = await _reader
-                .ReadRotatedAsync(image, vertical, _vision.LabelLocatorMinAreaWidth, cancellationToken)
-                .ConfigureAwait(false);
-            texts = [.. texts, .. rotated.Where(IsConfidentRotatedRead)];
-        }
-
-        readings = ReadAll();
-
-        // OCR tahap 1: area label tetap (kiri-atas), hanya kardus yang belum terbaca dari kotak label
-        BoundingBox[] fixedAreas = [.. front.Kept
-            .Where((_, i) => readings[i].Status is not (ReadStatus.Matched or ReadStatus.Corrected))
-            .Select(c => LabelRegion(c.Box, _vision.LabelCropWidthRatio, _vision.LabelCropHeightRatio))];
-        if (fixedAreas.Length > 0)
-        {
-            IReadOnlyList<OcrText> more = await _reader.ReadAllAsync(image, fixedAreas, 0, cancellationToken).ConfigureAwait(false);
-            texts = [.. texts, .. more];
-            readings = ReadAll();
-        }
-
-        foreach (OcrScanOptions scan in _vision.OcrRetryScans)
-        {
-            // OCR tahap 1b: kardus yang masih belum terbaca dibaca ulang dengan ukuran area/perbesaran scan ini
-            // (angka kecil, atau terpotong batas area). Kardus yang sudah terbaca tidak disentuh.
-            BoundingBox[] unread = [.. front.Kept
-                .Where((_, i) => readings[i].Status is not (ReadStatus.Matched or ReadStatus.Corrected))
-                .Select(c => LabelRegion(c.Box, scan.WidthRatio, scan.HeightRatio))];
-            if (unread.Length == 0)
+            // OCR tahap 0b (Paddle): kotak label + margin, hanya kardus yang belum terbaca
+            BoundingBox[] upright = [.. labels.Where((_, i) => Unread(i)).SelectMany(l => l).Where(l => !IsVertical(l))];
+            if (upright.Length > 0)
             {
-                break;
+                IReadOnlyList<OcrText> more = await _reader
+                    .ReadAllAsync(image, upright, _vision.LabelLocatorMinAreaWidth, cancellationToken)
+                    .ConfigureAwait(false);
+                texts = [.. texts, .. more];
             }
 
-            IReadOnlyList<OcrText> more = await _reader
-                .ReadAllAsync(image, unread, scan.MinAreaWidth, cancellationToken)
-                .ConfigureAwait(false);
-            texts = [.. texts, .. more];
-            readings = ReadAll();
-        }
-
-        if (_vision.OcrFullCartonFallback)
-        {
-            // OCR tahap 2 (opsional): seluruh kardus, hanya untuk kardus yang belum terbaca dari area label
-            BoundingBox[] unread = [.. front.Kept
-                .Where((_, i) => readings[i].Status is not (ReadStatus.Matched or ReadStatus.Corrected))
-                .Select(c => c.Box)];
-            if (unread.Length > 0)
+            // OCR tahap 0c: label tegak (diputar 90°), dibaca setelah diputar ke dua arah; hanya angka yang meyakinkan
+            BoundingBox[] vertical = [.. labels.Where((_, i) => Unread(i)).SelectMany(l => l).Where(IsVertical)];
+            if (vertical.Length > 0 && _vision.LabelLocatorRotatedMinConfidence > 0)
             {
-                IReadOnlyList<OcrText> more = await _reader.ReadAllAsync(image, unread, 0, cancellationToken).ConfigureAwait(false);
+                IReadOnlyList<OcrText> rotated = await _reader
+                    .ReadRotatedAsync(image, vertical, _vision.LabelLocatorMinAreaWidth, cancellationToken)
+                    .ConfigureAwait(false);
+                texts = [.. texts, .. rotated.Where(IsConfidentRotatedRead)];
+            }
+
+            readings = ReadAll();
+
+            // OCR tahap 1: area label tetap (kiri-atas), hanya kardus yang belum terbaca dari kotak label
+            BoundingBox[] fixedAreas = [.. front.Kept
+                .Where((_, i) => readings[i].Status is not (ReadStatus.Matched or ReadStatus.Corrected))
+                .Select(c => LabelRegion(c.Box, _vision.LabelCropWidthRatio, _vision.LabelCropHeightRatio))];
+            if (fixedAreas.Length > 0)
+            {
+                IReadOnlyList<OcrText> more = await _reader.ReadAllAsync(image, fixedAreas, 0, cancellationToken).ConfigureAwait(false);
                 texts = [.. texts, .. more];
                 readings = ReadAll();
+            }
+
+            foreach (OcrScanOptions scan in _vision.OcrRetryScans)
+            {
+                // OCR tahap 1b: kardus yang masih belum terbaca dibaca ulang dengan ukuran area/perbesaran scan ini
+                // (angka kecil, atau terpotong batas area). Kardus yang sudah terbaca tidak disentuh.
+                BoundingBox[] unread = [.. front.Kept
+                    .Where((_, i) => readings[i].Status is not (ReadStatus.Matched or ReadStatus.Corrected))
+                    .Select(c => LabelRegion(c.Box, scan.WidthRatio, scan.HeightRatio))];
+                if (unread.Length == 0)
+                {
+                    break;
+                }
+
+                IReadOnlyList<OcrText> more = await _reader
+                    .ReadAllAsync(image, unread, scan.MinAreaWidth, cancellationToken)
+                    .ConfigureAwait(false);
+                texts = [.. texts, .. more];
+                readings = ReadAll();
+            }
+
+            if (_vision.OcrFullCartonFallback)
+            {
+                // OCR tahap 2 (opsional): seluruh kardus, hanya untuk kardus yang belum terbaca dari area label
+                BoundingBox[] unread = [.. front.Kept
+                    .Where((_, i) => readings[i].Status is not (ReadStatus.Matched or ReadStatus.Corrected))
+                    .Select(c => c.Box)];
+                if (unread.Length > 0)
+                {
+                    IReadOnlyList<OcrText> more = await _reader.ReadAllAsync(image, unread, 0, cancellationToken).ConfigureAwait(false);
+                    texts = [.. texts, .. more];
+                    readings = ReadAll();
+                }
             }
         }
 
@@ -222,7 +254,12 @@ public sealed partial class CollectSkuHandler
         }
 
         IReadOnlyList<SkuReading> completed = PartialReadMatch.Apply(
-            readings, [.. front.Kept.Select(c => PartialDigits(c.Box, texts))], candidates, _vision.PartialReadMinDigits);
+            readings,
+            [.. front.Kept.Select(c => PartialDigits(c.Box, texts))],
+            candidates,
+            _vision.PartialReadMinDigits,
+            _vision.MajorityMinCount,
+            _vision.MajorityDominance);
         bool partialCorrected = completed.Where((r, i) => r != readings[i]).Any();
         readings = completed;
         IReadOnlyList<float[]> embeddings = await EmbedAsync(image, front.Kept, readings, cancellationToken).ConfigureAwait(false);
@@ -306,6 +343,13 @@ public sealed partial class CollectSkuHandler
         List<DistinctSkuDto> distinctSkus = BuildDistinct(cells);
         List<string> warnings = BuildWarnings(front, layout, cells, majorityCorrected, partialCorrected);
         long totalMs = stopwatch.ElapsedMilliseconds;
+        LogResult(
+            _logger,
+            cells.Where(c => c.ReadStatus == ReadStatus.Matched).Select(c => c.Id).Distinct().Count(),
+            cells.Where(c => c.ReadStatus == ReadStatus.Corrected).Select(c => c.Id).Distinct().Count(),
+            cells.Where(c => c.ReadStatus == ReadStatus.InferredByAppearance).Select(c => c.Id).Distinct().Count(),
+            cells.Where(c => c.ReadStatus == ReadStatus.Unknown).Select(c => c.Id).Distinct().Count(),
+            cells.Where(c => c.ReadStatus == ReadStatus.LabelNotVisible).Select(c => c.Id).Distinct().Count());
         return new CollectSkuResponse
         {
             InspectionId = Guid.NewGuid(),
@@ -320,6 +364,7 @@ public sealed partial class CollectSkuHandler
             DistinctSkus = distinctSkus,
             Warnings = warnings,
             ProcessingTimeMs = totalMs,
+            Logs = [.. capture.Entries.Select(e => new ProcessingLogDto { AtMs = e.AtMs, Level = e.Level, Source = e.Source, Message = e.Message })],
             Timings = new CollectSkuTimingsDto
             {
                 DecodeMs = decodeMs,
@@ -677,4 +722,20 @@ public sealed partial class CollectSkuHandler
         Level = LogLevel.Information,
         Message = "Appearance inference: {Inferred} dari {Unread} kardus tanpa SKU terbaca diisi dari kardus mirip")]
     private static partial void LogAppearance(ILogger logger, int inferred, int unread);
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "OCR recognizer {Model}: {Lines} kotak label, {Read} terbaca, {Used} dipakai (keyakinan ≥ {MinConfidence}), {Cartons}/{Total} kardus terbaca, {ElapsedMs} ms")]
+    private static partial void LogRecognizer(
+        ILogger logger, string model, int lines, int read, int used, double minConfidence, int cartons, int total, long elapsedMs);
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "OCR tanpa Paddle (Vision:PaddleOcrFallback = false): {Unread} kardus belum terbaca diserahkan ke koreksi mayoritas, potongan nomor, dan inferensi tampilan")]
+    private static partial void LogNoPaddle(ILogger logger, int unread);
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "Hasil akhir per kardus: Matched {Matched}, Corrected {Corrected}, InferredByAppearance {Inferred}, Unknown {Unknown}, LabelNotVisible {NotVisible}")]
+    private static partial void LogResult(ILogger logger, int matched, int corrected, int inferred, int unknown, int notVisible);
 }

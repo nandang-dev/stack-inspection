@@ -17,11 +17,19 @@ public static class PartialReadMatch
     /// <param name="partialDigits">Potongan digit hasil OCR per kardus (urutan sama dengan <paramref name="readings"/>).</param>
     /// <param name="candidates">SKU dari request (boleh kosong).</param>
     /// <param name="minDigits">Panjang potongan minimal (0 = nonaktif).</param>
+    /// <param name="dominantMinCount">
+    /// Jika potongan cocok ke beberapa SKU, SKU yang terbaca di minimal sekian kardus foto yang sama dan
+    /// <paramref name="dominance"/> kali lebih sering dari pesaing terbanyaknya tetap dipakai (mis. <c>65590</c> →
+    /// 65590059 di 33 kardus, bukan salah baca 65590053 di 1 kardus). 0 = harus tepat satu SKU.
+    /// </param>
+    /// <param name="dominance">Rasio jumlah kardus SKU dominan terhadap pesaingnya.</param>
     public static IReadOnlyList<SkuReading> Apply(
         IReadOnlyList<SkuReading> readings,
         IReadOnlyList<IReadOnlyList<string>> partialDigits,
         IReadOnlyCollection<string> candidates,
-        int minDigits)
+        int minDigits,
+        int dominantMinCount = 0,
+        int dominance = 3)
     {
         ArgumentNullException.ThrowIfNull(readings);
         ArgumentNullException.ThrowIfNull(partialDigits);
@@ -31,11 +39,11 @@ public static class PartialReadMatch
             return readings;
         }
 
-        string[] references = [.. readings
+        Dictionary<string, int> counts = readings
             .Where(r => r.Status is ReadStatus.Matched or ReadStatus.Corrected)
-            .Select(r => r.Sku)
-            .Concat(candidates)
-            .Distinct(StringComparer.Ordinal)];
+            .GroupBy(r => r.Sku, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal);
+        string[] references = [.. counts.Keys.Concat(candidates).Distinct(StringComparer.Ordinal)];
         if (references.Length == 0)
         {
             return readings;
@@ -53,15 +61,30 @@ public static class PartialReadMatch
             foreach (string digits in partialDigits[i].Where(d => d.Length >= minDigits).OrderByDescending(d => d.Length))
             {
                 string[] matches = [.. references.Where(sku => IsPartOf(digits, sku))];
-                if (matches.Length == 1)
+                string? chosen = matches.Length == 1 ? matches[0] : Dominant(matches, counts, dominantMinCount, dominance);
+                if (chosen is not null)
                 {
-                    result[i] = reading with { Sku = matches[0], OcrText = reading.OcrText ?? digits, Status = ReadStatus.Corrected };
+                    result[i] = reading with { Sku = chosen, OcrText = reading.OcrText ?? digits, Status = ReadStatus.Corrected };
                     break;
                 }
             }
         }
 
         return result;
+    }
+
+    /// <summary>SKU yang jauh lebih sering terbaca di foto daripada kecocokan lain; null jika tidak ada.</summary>
+    private static string? Dominant(string[] matches, Dictionary<string, int> counts, int minCount, int dominance)
+    {
+        if (minCount <= 0 || matches.Length < 2)
+        {
+            return null;
+        }
+
+        (string Sku, int Count)[] ranked = [.. matches
+            .Select(m => (Sku: m, Count: counts.GetValueOrDefault(m)))
+            .OrderByDescending(m => m.Count)];
+        return ranked[0].Count >= minCount && ranked[0].Count >= dominance * Math.Max(1, ranked[1].Count) ? ranked[0].Sku : null;
     }
 
     /// <summary>

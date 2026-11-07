@@ -326,6 +326,34 @@ public class CollectSkuHandlerTests
     }
 
     [Fact]
+    public async Task WithoutPaddle_UsesAllRecognizerReads_AndNeverCallsPaddle()
+    {
+        CartonBox sure = Build.Carton(300, 600);
+        CartonBox unsure = Build.Carton(710, 600);
+        CartonBox noLabel = Build.Carton(1120, 600);
+        BoundingBox sureLabel = new(560, 820, 680, 860);
+        BoundingBox unsureLabel = new(970, 820, 1090, 860);
+        StubReader reader = new(new Dictionary<BoundingBox, (string?, string?)> { [noLabel.Box] = ("68140913", null) });
+        StubRecognizer recognizer = new(new Dictionary<BoundingBox, (string, double)>
+        {
+            [sureLabel] = ("68410975", 0.99),
+            [unsureLabel] = ("68582213", 0.80), // di bawah ambang 0,95, tetap dipakai tanpa Paddle
+        });
+        StubLocator locator = new(new Dictionary<BoundingBox, BoundingBox> { [sure.Box] = sureLabel, [unsure.Box] = unsureLabel });
+
+        CollectSkuResponse result = await Build.Handler(
+                new StubDecoder(3000, 4000), new StubDetector([sure, unsure, noLabel]), reader,
+                locator: locator, recognizer: recognizer, paddleOcrFallback: false)
+            .HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None);
+
+        Assert.Equal(0, reader.Calls);
+        Dictionary<int, CellDto> byColumn = result.Cells.ToDictionary(c => c.Column);
+        Assert.Equal(("68410975", ReadStatus.Matched), (byColumn[0].Sku, byColumn[0].ReadStatus));
+        Assert.Equal(("68582213", ReadStatus.Matched), (byColumn[1].Sku, byColumn[1].ReadStatus));
+        Assert.Equal(ReadStatus.LabelNotVisible, byColumn[2].ReadStatus); // tanpa kotak label dan tanpa Paddle
+    }
+
+    [Fact]
     public async Task LabelRecognizer_VerticalLabel_TriesBothRotations()
     {
         CartonBox standing = Build.Carton(300, 600);

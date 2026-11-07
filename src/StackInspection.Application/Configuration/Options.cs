@@ -186,6 +186,14 @@ public sealed class VisionOptions
     public double LabelRecognizerMinConfidence { get; set; } = 0.95;
 
     /// <summary>
+    /// <c>true</c> = kardus yang belum terbaca yakin oleh recognizer dibaca ulang PaddleOCR (kotak label + margin, label
+    /// tegak, area label tetap, <see cref="OcrRetryScans"/>, <see cref="OcrFullCartonFallback"/>): lambat, ±90% waktu
+    /// proses. <c>false</c> = OCR hanya label locator + recognizer (<see cref="LabelRecognizerModel"/>); semua hasil
+    /// recognizer dipakai (<see cref="LabelRecognizerMinConfidence"/> diabaikan) dan model Paddle tidak dimuat.
+    /// </summary>
+    public bool PaddleOcrFallback { get; set; } = true;
+
+    /// <summary>
     /// Kemiripan tampilan (cosine) minimal ke kardus acuan. Tuning case 01: kardus SKU &amp; desain sama 0,84–0,95,
     /// SKU lain ≤ 0,75.
     /// </summary>

@@ -166,3 +166,23 @@ public interface ITextLineRecognizer
         VisionImage image, IReadOnlyList<TextLineRegion> regions, CancellationToken cancellationToken);
 }
 
+/// <summary>Satu baris log yang ditulis selama memproses satu request (lihat <see cref="IProcessingLog"/>).</summary>
+public sealed record ProcessingLogEntry(long AtMs, string Level, string Source, string Message);
+
+/// <summary>
+/// Menangkap log yang ditulis selama satu proses (mis. satu Collect SKU) supaya bisa dikirim di response dan preview,
+/// tanpa harus membuka log server. Log server tetap ditulis seperti biasa.
+/// </summary>
+public interface IProcessingLog
+{
+    /// <summary>Mulai menangkap log di alur async ini sampai hasilnya di-dispose.</summary>
+    IProcessingLogCapture Begin();
+}
+
+/// <summary>Penangkapan log yang sedang berjalan.</summary>
+public interface IProcessingLogCapture : IDisposable
+{
+    /// <summary>Log yang tertangkap sejauh ini, urut waktu.</summary>
+    IReadOnlyList<ProcessingLogEntry> Entries { get; }
+}
+

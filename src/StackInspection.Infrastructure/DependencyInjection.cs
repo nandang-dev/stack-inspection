@@ -1,9 +1,11 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using StackInspection.Application.Abstractions;
 using StackInspection.Application.Configuration;
 using StackInspection.Infrastructure.Fakes;
+using StackInspection.Infrastructure.Logging;
 using StackInspection.Infrastructure.Vision;
 
 namespace StackInspection.Infrastructure;
@@ -18,6 +20,11 @@ public static class DependencyInjection
     public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
     {
         _ = configuration;
+
+        // log per request ikut dikirim di response Collect SKU dan preview (lihat ProcessingLogCollector)
+        services.AddSingleton<ProcessingLogCollector>();
+        services.AddSingleton<IProcessingLog>(sp => sp.GetRequiredService<ProcessingLogCollector>());
+        services.AddSingleton<ILoggerProvider>(sp => sp.GetRequiredService<ProcessingLogCollector>());
 
         services.AddSingleton<FakeVisionFixtureProvider>();
         services.AddSingleton<FakeImageDecoder>();

@@ -54,6 +54,30 @@ public sealed class SkuInferenceTests
     }
 
     [Fact]
+    public void PartialRead_AmbiguousPiece_UsesSkuThatDominatesPhoto()
+    {
+        // tuning case 01: 65590059 terbaca di banyak kardus, salah baca 65590053 hanya sekali
+        SkuReading[] readings = [Read("65590059"), Read("65590059"), Read("65590059"), Read("65590053"), NotVisible(), NotVisible()];
+        IReadOnlyList<string>[] partial = [[], [], [], [], ["65590"], ["6497"]];
+
+        IReadOnlyList<SkuReading> result = PartialReadMatch.Apply(readings, partial, ["64972453", "64970111"], minDigits: 4, dominantMinCount: 3, dominance: 3);
+
+        Assert.Equal(("65590059", ReadStatus.Corrected), (result[4].Sku, result[4].Status));
+        Assert.Equal(ReadStatus.LabelNotVisible, result[5].Status); // 6497: dua candidate, tidak ada yang dominan
+    }
+
+    [Fact]
+    public void PartialRead_AmbiguousPiece_WithoutClearMajority_IsLeftUnread()
+    {
+        SkuReading[] readings = [Read("64955462"), Read("64955462"), Read("64955456"), NotVisible()];
+        IReadOnlyList<string>[] partial = [[], [], [], ["64955"]];
+
+        IReadOnlyList<SkuReading> result = PartialReadMatch.Apply(readings, partial, [], minDigits: 5, dominantMinCount: 3, dominance: 3);
+
+        Assert.Equal(ReadStatus.LabelNotVisible, result[3].Status); // 2 lawan 1: belum cukup dominan
+    }
+
+    [Fact]
     public void Appearance_NeedsTwoSimilarReferencesWithSameSku()
     {
         SkuReading[] readings = [Read("64972453"), Read("64972453"), Read("13143147"), NotVisible(), NotVisible()];
