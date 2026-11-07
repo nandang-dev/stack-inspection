@@ -26,8 +26,18 @@ public sealed class SkuInferenceTests
     [InlineData("85579", "65085578", false)]    // < 7 digit harus persis
     [InlineData("65578", "65085578", false)]    // tidak berurutan
     [InlineData("64972453", "64972453", false)] // bukan potongan (sudah utuh)
+    [InlineData("6471156", "64871156", true)]   // satu digit di tengah terlewat (tuning case 01 #22)
+    [InlineData("6471165", "64871156", false)]  // terlewat satu digit dan tertukar: bukan
     public void IsPartOf_ToleratesOneDigitOnlyFromSevenDigits(string digits, string sku, bool expected) =>
         Assert.Equal(expected, PartialReadMatch.IsPartOf(digits, sku));
+
+    [Theory]
+    [InlineData("655959", "65590059", true)]   // tuning case 01 #76: dua angka 0 terlewat
+    [InlineData("65900", "65590059", true)]    // #58
+    [InlineData("655959", "64955462", false)]
+    [InlineData("65590059", "65590059", false)] // bukan potongan
+    public void IsSubsequenceOf_AllowsSkippedDigitsInOrder(string digits, string sku, bool expected) =>
+        Assert.Equal(expected, PartialReadMatch.IsSubsequenceOf(digits, sku));
 
     [Fact]
     public void PartialRead_CompletesFromSkuReadInSamePhoto()
@@ -221,6 +231,19 @@ public sealed class SkuInferenceTests
 
         Assert.Equal(ReadStatus.Unknown, result[2].Status);
         Assert.Equal(("65590059", ReadStatus.InferredByAppearance), (result[3].Sku, result[3].Status));
+    }
+
+    [Fact]
+    public void Appearance_ConsistencyCheck_PicksMostSimilarSkuThatFitsOwnDigits()
+    {
+        // tuning case 01 #22: Molto terbaca 5457156 paling mirip tetangga 64924088, tetapi angkanya hanya cocok Molto
+        SkuReading[] readings = [Read("64924088"), Read("64871156"), Unknown("5457156")];
+        float[][] vectors = [Angle(0), Angle(20), Angle(2)];
+
+        IReadOnlyList<SkuReading> result = AppearanceInference.Apply(
+            readings, vectors, 0.90, 1, 0.05, (i, sku) => i != 2 || sku == "64871156");
+
+        Assert.Equal(("64871156", ReadStatus.InferredByAppearance), (result[2].Sku, result[2].Status));
     }
 
     [Fact]

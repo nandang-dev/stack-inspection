@@ -22,7 +22,8 @@ public static class AppearanceInference
     /// <param name="consistent">
     /// Syarat per (indeks kardus, SKU tebakan): SKU tidak bertentangan dengan angka yang sudah terbaca di kardus itu
     /// (tuning case 01: Molto terbaca <c>6871156</c> tidak boleh diberi SKU Sunlight 65590059 walau tampilannya mirip).
-    /// Jika gagal, kardus tidak diisi. null = tanpa syarat.
+    /// SKU yang gagal tidak ikut diperingkat (juga sebagai pesaing margin); jika tidak ada yang lolos, kardus tidak
+    /// diisi. null = tanpa syarat.
     /// </param>
     public static IReadOnlyList<SkuReading> Apply(
         IReadOnlyList<SkuReading> readings,
@@ -58,14 +59,19 @@ public static class AppearanceInference
                 bySku[readings[j].Sku] = (Math.Max(best, similarity), similar + (similarity >= minSimilarity ? 1 : 0));
             }
 
-            KeyValuePair<string, (double Best, int Similar)>[] ranked = [.. bySku.OrderByDescending(s => s.Value.Best)];
+            // SKU yang bertentangan dengan angka kardus itu sendiri tidak ikut bersaing (tuning case 01 #22: Molto
+            // terbaca 5457156 paling mirip tetangga 64924088; tanpa saringan ini kardus dibiarkan kosong, bukan diberi
+            // SKU terbaik yang masih cocok dengan angkanya)
+            KeyValuePair<string, (double Best, int Similar)>[] ranked = [.. bySku
+                .Where(s => consistent is null || consistent(i, s.Key))
+                .OrderByDescending(s => s.Value.Best)];
             if (ranked.Length == 0 || ranked[0].Value.Similar < minReferences)
             {
                 continue;
             }
 
             double runnerUp = ranked.Length > 1 ? ranked[1].Value.Best : double.NegativeInfinity;
-            if (ranked[0].Value.Best - runnerUp >= minMargin && (consistent is null || consistent(i, ranked[0].Key)))
+            if (ranked[0].Value.Best - runnerUp >= minMargin)
             {
                 // Confidence = kemiripan tampilan ke acuan terbaik (bukan keyakinan OCR)
                 result[i] = readings[i] with { Sku = ranked[0].Key, Confidence = ranked[0].Value.Best, Status = ReadStatus.InferredByAppearance };
