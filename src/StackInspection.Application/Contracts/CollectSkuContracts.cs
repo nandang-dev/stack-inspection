@@ -151,6 +151,54 @@ public sealed class CollectSkuResponse
 
     /// <summary>Rincian waktu proses per tahap (ms); jumlahnya ≈ <c>processingTimeMs</c>.</summary>
     public CollectSkuTimingsDto Timings { get; init; } = new();
+
+    /// <summary>
+    /// Log server selama memproses foto ini (OCR per tahap, recognizer, fast reject, inferensi tampilan, peringatan
+    /// model tidak ditemukan, dll.), untuk analisis tanpa membuka log server. Hanya untuk diagnosis; isi dan formatnya
+    /// bisa berubah, jangan diproses otomatis oleh client.
+    /// </summary>
+    public IReadOnlyList<ProcessingLogDto> Logs { get; init; } = [];
+
+    /// <summary>
+    /// Kotak label nomor SKU hasil label locator beserta teks yang dibaca recognizer dari kotak itu, untuk memeriksa
+    /// apakah salah baca berasal dari posisi label atau dari OCR. Hanya untuk diagnosis; jangan diproses otomatis.
+    /// </summary>
+    public IReadOnlyList<LabelBoxDto> LabelBoxes { get; init; } = [];
+}
+
+/// <summary>Satu kotak label hasil label locator (diagnosis).</summary>
+public sealed class LabelBoxDto
+{
+    /// <summary><c>id</c> kardus pemilik label (sama dengan <c>cells[].id</c>).</summary>
+    public int CartonId { get; init; }
+
+    /// <summary>Kotak label di koordinat foto (dipotong ke kotak kardus).</summary>
+    public BoundingBoxDto BoundingBox { get; init; } = new();
+
+    /// <summary>Skor label locator 0–1.</summary>
+    public double Confidence { get; init; }
+
+    /// <summary>Teks yang dibaca recognizer dari kotak ini (label tegak: putaran berkeyakinan tertinggi); null = tidak terbaca.</summary>
+    public string? Text { get; init; }
+
+    /// <summary>Keyakinan recognizer 0–1 untuk <see cref="Text"/>.</summary>
+    public double TextConfidence { get; init; }
+}
+
+/// <summary>Satu baris log proses.</summary>
+public sealed class ProcessingLogDto
+{
+    /// <summary>Waktu sejak proses dimulai (ms).</summary>
+    public long AtMs { get; init; }
+
+    /// <summary>Level log: <c>Information</c>, <c>Warning</c>, <c>Error</c>.</summary>
+    public string Level { get; init; } = string.Empty;
+
+    /// <summary>Komponen yang menulis log (mis. <c>CollectSkuHandler</c>, <c>PaddleOcrTextReader</c>).</summary>
+    public string Source { get; init; } = string.Empty;
+
+    /// <summary>Isi log.</summary>
+    public string Message { get; init; } = string.Empty;
 }
 
 /// <summary>Waktu eksekusi tiap tahap pipeline Collect SKU (ms).</summary>
@@ -165,9 +213,13 @@ public sealed class CollectSkuTimingsDto
     /// <summary>Deteksi kardus + filter kotak bersarang, gate hasil deteksi, dan filter lapisan depan.</summary>
     public long DetectMs { get; init; }
 
+    /// <summary>Label locator: mencari kotak label nomor SKU di setiap kardus (0 jika <c>Vision:LabelLocatorModel</c> kosong).</summary>
+    public long LabelLocateMs { get; init; }
+
     /// <summary>
-    /// OCR area label semua kardus (+ tahap 2 seluruh kardus jika <c>Vision:OcrFullCartonFallback</c> aktif),
-    /// termasuk menunggu giliran jika OCR sedang dipakai request lain.
+    /// OCR kotak label hasil label locator, lalu area label tetap untuk kardus yang belum terbaca (+ tahap 2 seluruh
+    /// kardus jika <c>Vision:OcrFullCartonFallback</c> aktif), termasuk menunggu giliran jika OCR sedang dipakai
+    /// request lain.
     /// </summary>
     public long OcrMs { get; init; }
 

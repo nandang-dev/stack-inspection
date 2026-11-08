@@ -88,6 +88,18 @@ public interface ISkuLabelReader
     /// <param name="cancellationToken">Token pembatalan.</param>
     Task<IReadOnlyList<OcrText>> ReadAllAsync(
         VisionImage image, IReadOnlyList<BoundingBox> regions, int minAreaWidth, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Membaca area label yang tegak (teks diputar 90°): setiap area dipotong, diputar 90° searah dan berlawanan
+    /// jarum jam, lalu keduanya di-OCR. Arah yang salah biasanya menghasilkan angka acak, jadi pemanggil wajib
+    /// menyaring hasilnya. <see cref="OcrText.Box"/> = area asal (koordinat foto).
+    /// </summary>
+    /// <param name="image">Foto.</param>
+    /// <param name="regions">Area label tegak (koordinat foto).</param>
+    /// <param name="minAreaWidth">Sama seperti <see cref="ReadAllAsync"/>, diukur setelah diputar.</param>
+    /// <param name="cancellationToken">Token pembatalan.</param>
+    Task<IReadOnlyList<OcrText>> ReadRotatedAsync(
+        VisionImage image, IReadOnlyList<BoundingBox> regions, int minAreaWidth, CancellationToken cancellationToken);
 }
 
 /// <summary>Mencari teks pada area foto (dipakai untuk mendeteksi stempel aplikasi kamera).</summary>
@@ -109,3 +121,68 @@ public interface ICartonEmbedder
     /// <summary>Satu vektor (panjang 1) per kotak, urutan sama dengan <paramref name="boxes"/>.</summary>
     Task<IReadOnlyList<float[]>> EmbedAsync(VisionImage image, IReadOnlyList<BoundingBox> boxes, CancellationToken cancellationToken);
 }
+
+/// <summary>Satu kotak label nomor SKU hasil label locator. <paramref name="Box"/> = koordinat foto.</summary>
+public sealed record LabelBox(BoundingBox Box, double Confidence);
+
+/// <summary>Label locator (Carton Trainer): mencari kotak label nomor SKU di setiap kardus.</summary>
+public interface ILabelLocator
+{
+    /// <summary>
+    /// Kotak label per kardus, urutan sama dengan <paramref name="cartons"/>. Daftar kosong = tidak ada label
+    /// ditemukan (atau model nonaktif/tidak ada).
+    /// </summary>
+    Task<IReadOnlyList<IReadOnlyList<LabelBox>>> LocateAsync(
+        VisionImage image, IReadOnlyList<BoundingBox> cartons, CancellationToken cancellationToken);
+}
+
+/// <summary>Putaran potongan teks sebelum dikenali.</summary>
+public enum TextLineRotation
+{
+    /// <summary>Apa adanya (teks mendatar).</summary>
+    None,
+
+    /// <summary>Diputar 90° searah jarum jam.</summary>
+    Clockwise,
+
+    /// <summary>Diputar 90° berlawanan jarum jam.</summary>
+    CounterClockwise,
+}
+
+/// <summary>Satu potongan berisi satu baris teks (mis. kotak label hasil label locator), koordinat foto.</summary>
+public sealed record TextLineRegion(BoundingBox Box, TextLineRotation Rotation);
+
+/// <summary>
+/// Pengenal teks satu baris tanpa deteksi teks (recognizer saja): potongan sudah ditemukan label locator, jadi tahap
+/// deteksi teks yang berat dilewati.
+/// </summary>
+public interface ITextLineRecognizer
+{
+    /// <summary>
+    /// Satu hasil per area, urutan sama dengan <paramref name="regions"/>. <see cref="OcrText.Box"/> = area asal;
+    /// teks kosong dengan keyakinan 0 jika tidak terbaca atau model nonaktif.
+    /// </summary>
+    Task<IReadOnlyList<OcrText>> RecognizeAsync(
+        VisionImage image, IReadOnlyList<TextLineRegion> regions, CancellationToken cancellationToken);
+}
+
+/// <summary>Satu baris log yang ditulis selama memproses satu request (lihat <see cref="IProcessingLog"/>).</summary>
+public sealed record ProcessingLogEntry(long AtMs, string Level, string Source, string Message);
+
+/// <summary>
+/// Menangkap log yang ditulis selama satu proses (mis. satu Collect SKU) supaya bisa dikirim di response dan preview,
+/// tanpa harus membuka log server. Log server tetap ditulis seperti biasa.
+/// </summary>
+public interface IProcessingLog
+{
+    /// <summary>Mulai menangkap log di alur async ini sampai hasilnya di-dispose.</summary>
+    IProcessingLogCapture Begin();
+}
+
+/// <summary>Penangkapan log yang sedang berjalan.</summary>
+public interface IProcessingLogCapture : IDisposable
+{
+    /// <summary>Log yang tertangkap sejauh ini, urut waktu.</summary>
+    IReadOnlyList<ProcessingLogEntry> Entries { get; }
+}
+

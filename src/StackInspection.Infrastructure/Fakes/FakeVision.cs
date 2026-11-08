@@ -114,6 +114,10 @@ public sealed class FakeSkuLabelReader(FakeVisionFixtureProvider provider) : ISk
             b.CenterX >= r.X1 && b.CenterX <= r.X2 && b.CenterY >= r.Y1 && b.CenterY <= r.Y2))]);
     }
 
+    public Task<IReadOnlyList<OcrText>> ReadRotatedAsync(
+        VisionImage image, IReadOnlyList<BoundingBox> regions, int minAreaWidth, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<OcrText>>([]);
+
     private static BoundingBox Part(BoundingBox box, double x1, double y1, double x2, double y2) =>
         new(box.X1 + (box.Width * x1), box.Y1 + (box.Height * y1), box.X1 + (box.Width * x2), box.Y1 + (box.Height * y2));
 }
@@ -137,6 +141,22 @@ public sealed class FakeCartonEmbedder : ICartonEmbedder
 {
     public Task<IReadOnlyList<float[]>> EmbedAsync(VisionImage image, IReadOnlyList<BoundingBox> boxes, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<float[]>>([]);
+}
+
+/// <summary>Label locator palsu: tidak menemukan label, sehingga OCR memakai area label tetap seperti sebelumnya.</summary>
+public sealed class FakeLabelLocator : ILabelLocator
+{
+    public Task<IReadOnlyList<IReadOnlyList<LabelBox>>> LocateAsync(
+        VisionImage image, IReadOnlyList<BoundingBox> cartons, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<IReadOnlyList<LabelBox>>>([.. cartons.Select(_ => (IReadOnlyList<LabelBox>)[])]);
+}
+
+/// <summary>Recognizer palsu: tidak membaca apa pun, sehingga semua kardus dibaca jalur OCR biasa.</summary>
+public sealed class FakeTextLineRecognizer : ITextLineRecognizer
+{
+    public Task<IReadOnlyList<OcrText>> RecognizeAsync(
+        VisionImage image, IReadOnlyList<TextLineRegion> regions, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<OcrText>>([.. regions.Select(r => new OcrText(string.Empty, 0, r.Box))]);
 }
 
 /// <summary>Katalog berisi satu model palsu (dan model default dari konfigurasi).</summary>

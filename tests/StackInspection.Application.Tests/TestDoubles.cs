@@ -64,6 +64,24 @@ internal sealed class StubReader(Dictionary<BoundingBox, (string? Label, string?
     /// </summary>
     public Dictionary<BoundingBox, (string Text, int MinWidth)> EnlargedOnly { get; } = [];
 
+    /// <summary>Teks di posisi bebas (koordinat foto), mis. label di kanan-bawah kardus.</summary>
+    public List<OcrText> Anywhere { get; } = [];
+
+    /// <summary>Hasil OCR per area label tegak (kedua arah putaran), dicocokkan dari area yang diminta.</summary>
+    public Dictionary<BoundingBox, (string Text, double Confidence)[]> Rotated { get; } = [];
+
+    /// <summary>Area setiap panggilan <see cref="ReadRotatedAsync"/>.</summary>
+    public List<BoundingBox> RotatedRegions { get; } = [];
+
+    public Task<IReadOnlyList<OcrText>> ReadRotatedAsync(
+        VisionImage image, IReadOnlyList<BoundingBox> regions, int minAreaWidth, CancellationToken cancellationToken)
+    {
+        RotatedRegions.AddRange(regions);
+        return Task.FromResult<IReadOnlyList<OcrText>>([.. regions
+            .SelectMany(r => Rotated.FirstOrDefault(e => r.CenterX >= e.Key.X1 && r.CenterX <= e.Key.X2
+                && r.CenterY >= e.Key.Y1 && r.CenterY <= e.Key.Y2).Value ?? [], (r, t) => new OcrText(t.Text, t.Confidence, r))]);
+    }
+
     public Task<IReadOnlyList<OcrText>> ReadAllAsync(
         VisionImage image, IReadOnlyList<BoundingBox> regions, int minAreaWidth, CancellationToken cancellationToken)
     {
@@ -87,6 +105,8 @@ internal sealed class StubReader(Dictionary<BoundingBox, (string? Label, string?
         result.AddRange(EnlargedOnly
             .Where(e => minAreaWidth > 0 && minAreaWidth >= e.Value.MinWidth)
             .Select(e => new OcrText(e.Value.Text, 0.9, new BoundingBox(e.Key.X1 + 10, e.Key.Y1 + 10, e.Key.X1 + 110, e.Key.Y1 + 40))));
+
+        result.AddRange(Anywhere);
 
         // seperti OCR asli: hanya teks yang titik tengahnya di dalam area yang diminta
         return Task.FromResult<IReadOnlyList<OcrText>>([.. result.Where(t => t.Box is BoundingBox b && regions.Any(r =>
@@ -112,6 +132,54 @@ internal sealed class StubEmbedder(Func<BoundingBox, float[]> vector) : ICartonE
     }
 }
 
+/// <summary>Label locator dengan kotak label tetap per kardus (dicocokkan dari kotak kardus).</summary>
+internal sealed class StubLocator(Dictionary<BoundingBox, BoundingBox> labels) : ILabelLocator
+{
+    public int Calls { get; private set; }
+
+    public Task<IReadOnlyList<IReadOnlyList<LabelBox>>> LocateAsync(
+        VisionImage image, IReadOnlyList<BoundingBox> cartons, CancellationToken cancellationToken)
+    {
+        Calls++;
+        return Task.FromResult<IReadOnlyList<IReadOnlyList<LabelBox>>>([.. cartons.Select(c => labels.TryGetValue(c, out BoundingBox label)
+            ? (IReadOnlyList<LabelBox>)[new LabelBox(label, 0.9)]
+            : [])]);
+    }
+}
+
+/// <summary>Recognizer dengan hasil tetap per kotak label (dicocokkan dari titik tengah area).</summary>
+internal sealed class StubRecognizer(Dictionary<BoundingBox, (string Text, double Confidence)> reads) : ITextLineRecognizer
+{
+    public List<TextLineRegion> Regions { get; } = [];
+
+    public Task<IReadOnlyList<OcrText>> RecognizeAsync(
+        VisionImage image, IReadOnlyList<TextLineRegion> regions, CancellationToken cancellationToken)
+    {
+        Regions.AddRange(regions);
+        return Task.FromResult<IReadOnlyList<OcrText>>([.. regions.Select(r =>
+        {
+            (string text, double confidence) = reads.FirstOrDefault(e => r.Box.CenterX >= e.Key.X1 && r.Box.CenterX <= e.Key.X2
+                && r.Box.CenterY >= e.Key.Y1 && r.Box.CenterY <= e.Key.Y2).Value;
+            return new OcrText(text ?? string.Empty, confidence, r.Box);
+        })]);
+    }
+}
+
+/// <summary>Penangkap log yang tidak menangkap apa pun (log diuji di integration test API).</summary>
+internal sealed class NoProcessingLog : IProcessingLog
+{
+    public IProcessingLogCapture Begin() => new Empty();
+
+    private sealed class Empty : IProcessingLogCapture
+    {
+        public IReadOnlyList<ProcessingLogEntry> Entries => [];
+
+        public void Dispose()
+        {
+        }
+    }
+}
+
 internal static class Build
 {
     public static readonly byte[] Jpeg = [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10];
@@ -130,7 +198,10 @@ internal static class Build
         ICartonEmbedder? embedder = null,
         bool ocrFullCartonFallback = false,
         IReadOnlyList<OcrScanOptions>? ocrRetryScans = null,
-        double majorityMaxConfidence = 1.0)
+        double majorityMaxConfidence = 1.0,
+        ILabelLocator? locator = null,
+        ITextLineRecognizer? recognizer = null,
+        bool paddleOcrFallback = true)
     {
         // gate fast reject dimatikan secara default supaya grid kecil di test lain tidak tertolak
         IOptions<PhotoOptions> photo = Options.Create(new PhotoOptions
@@ -150,10 +221,16 @@ internal static class Build
             new StubCatalog(),
             reader,
             embedder ?? new StubEmbedder(_ => []),
+            locator ?? new StubLocator([]),
+            recognizer ?? new StubRecognizer([]),
+            new NoProcessingLog(),
             inspectability,
             Options.Create(new VisionOptions
             {
                 AppearanceModel = embedder is null ? string.Empty : "carton-embed-v1",
+                LabelLocatorModel = locator is null ? string.Empty : "label-loc-v1",
+                LabelRecognizerModel = recognizer is null ? string.Empty : "ppocr-rec-v4",
+                PaddleOcrFallback = paddleOcrFallback,
                 OcrFullCartonFallback = ocrFullCartonFallback,
                 OcrRetryScans = [.. ocrRetryScans ?? []],
                 MajorityMaxConfidence = majorityMaxConfidence,

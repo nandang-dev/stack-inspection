@@ -16,6 +16,13 @@ API untuk menilai kualitas tumpukan kardus di truk/kontainer dari sebuah foto (b
 
 Swagger UI: `/swagger` (aktif jika `Swagger:Enabled = true`). Health check: `/health`.
 
+Diagnosis: response Collect SKU berisi `logs` (log server selama memproses foto itu: OCR per tahap, recognizer,
+fast reject, inferensi tampilan, peringatan model tidak ditemukan, ringkasan status akhir), dan halaman Preview
+menampilkannya di bagian **Log proses** beserta rincian `timings`. Log server tetap ditulis seperti biasa.
+Response juga berisi `labelBoxes` (kotak label hasil label locator + teks yang dibaca OCR dari kotak itu); Preview
+menggambarnya sebagai kotak merah di panel **Posisi di foto** (arahkan kursor untuk melihat bacaan OCR dan skor locator),
+sehingga terlihat apakah salah baca berasal dari posisi label atau dari OCR.
+
 ### API key
 
 Semua endpoint `/api/...` wajib header `X-Api-Key`; tanpa key yang terdaftar → 401 `API_KEY_INVALID`.
@@ -93,9 +100,17 @@ tidak di-commit) cukup untuk development. Vision asli diuji di Linux (Docker) da
 | `Photo:MinLongSide` / `MinMegapixels` | 2048 / 2.0 | Gate resolusi: sisi terpanjang (px) **dan** jumlah piksel (MP) minimal. `MinMegapixels` 0 = tidak dicek |
 | `Photo:CameraOverlayEnabled` | false | Gate stempel kamera berbasis OCR. Default mati karena memakan ±100 detik per foto (OCR penuh di strip atas & bawah); akan digantikan classifier kelayakan foto |
 | `Photo:OverlayKeywords` | GPS Map Camera, Timemark, Lat, Long, Kode Foto | Kata kunci gate stempel kamera (hanya jika `CameraOverlayEnabled`) |
-| `Vision:PartialReadMinDigits` | 5 | Nomor SKU yang hanya terbaca sebagian (label terpotong/tertutup plastik, stiker, body kendaraan) dilengkapi dari SKU yang terbaca utuh di foto yang sama atau dari `candidateSkus`, jika potongannya ≥ 5 digit, berurutan, dan cocok ke tepat satu SKU (potongan ≥ 7 digit boleh beda 1 digit, mis. `1972453` → `64972453`). Status `Corrected`, warning `SKU_CORRECTED_BY_PARTIAL_READ`. 0 = nonaktif |
+| `Vision:PartialReadMinDigits` | 5 | Nomor SKU yang hanya terbaca sebagian (label terpotong/tertutup plastik, stiker, body kendaraan) dilengkapi dari SKU yang terbaca utuh di foto yang sama atau dari `candidateSkus`, jika potongannya ≥ 5 digit, berurutan, dan cocok ke tepat satu SKU (potongan ≥ 7 digit boleh beda 1 digit, mis. `1972453` → `64972453`; bacaan sepanjang SKU − 1 yang kehilangan satu digit di tengah juga diterima, mis. `6471156` → `64871156`). Status `Corrected`, warning `SKU_CORRECTED_BY_PARTIAL_READ`. 0 = nonaktif. Jika potongan cocok ke beberapa SKU, dipakai SKU yang terbaca di ≥ `MajorityMinCount` kardus dan ≥ `MajorityDominance`× lebih sering dari pesaingnya (salah baca satu kardus tidak lagi membuat potongan lain gagal dilengkapi) |
 | `Vision:AppearanceModel` | `carton-embed-v1` | Kardus yang labelnya tetap tidak terbaca diberi SKU kardus lain di foto yang sama yang tampilannya sangat mirip (embedder MobileNetV3 ImageNet, ±15 ms per 64 kardus). Status `InferredByAppearance`, warning `SKU_INFERRED_BY_APPEARANCE`. Kosong = nonaktif |
+| `Vision:LabelLocatorModel` | `label-loc-v1` | Label locator (YOLOX-nano 1 kelas, Carton Trainer) mencari kotak label nomor SKU di setiap kardus, di mana pun letaknya. OCR tahap 0 membaca kotak itu (+ margin, diperbesar sampai `LabelLocatorMinAreaWidth` px); kardus yang belum terbaca lanjut ke area label tetap dan `OcrRetryScans` seperti sebelumnya. Waktunya di `timings.labelLocateMs` (±4 ms/kardus di Mac). Folder model tidak ada → warning di log, OCR seperti sebelum ada locator. Kosong = nonaktif |
+| `Vision:LabelLocatorConfidence` / `LabelLocatorMargin` / `LabelLocatorMinAreaWidth` | 0.5 / 0.3 / 320 | Skor minimal kotak label; margin area OCR × sisi pendek kotak (kotak kadang memotong digit terakhir); lebar minimal area OCR setelah diperbesar |
+| `Vision:LabelLocatorRotatedMinConfidence` | 0.9 | Kotak label tegak (tinggi > lebar, label diputar 90°) dipotong, diputar 90° ke dua arah, lalu di-OCR. Hasil putaran hanya dipakai jika berupa tepat 8 angka asli dalam satu kata (tanda baca di tepi dibuang, mis. `[65067525]`) dengan keyakinan ≥ 0.9, karena putaran yang salah menghasilkan angka acak. Tuning case 01: putaran benar `[65067525]` 0.924, putaran salah `(869099)` 0.52. 0 = label tegak tidak dibaca |
+| `Vision:LabelRecognizerModel` / `LabelRecognizerMinConfidence` | `sku-digits-v4` / 0.98 | Recognizer teks pada kotak label locator (tanpa deteksi teks, label tegak dicoba 2 putaran). `sku-digits-vN` = OCR angka buatan kita (carton-trainer `scripts/sku_digits.py`); `ppocr-rec-v4` = PP-OCRv4 (Baidu). Ambang hanya berlaku jika `PaddleOcrFallback` = true: bacaan di bawahnya dibaca ulang Paddle. Folder model tidak ada → warning, tanpa Paddle semua kardus jadi `LABEL_NOT_VISIBLE` |
+| (label terpotong kotak kardus) | — | Kotak label yang menempel di tepi atas/bawah kardus dan lebih pipih dari 4 : 1 dibaca dari area yang diperluas keluar kardus sampai rasio ±3 : 1 (tuning case 01 #25: kotak kardus mulai di tengah label, label tinggal 62 × 11 px). Posisi teks tetap kotak label asli, jadi tetap milik kardus itu |
+| `Vision:PaddleOcrFallback` | `false` | `false` = OCR hanya label locator + recognizer: semua bacaan recognizer dipakai lalu disaring koreksi mayoritas / pelengkapan potongan / inferensi tampilan; model Paddle tidak dimuat (hemat RAM). Kardus tanpa kotak label → `LABEL_NOT_VISIBLE` atau diisi inferensi tampilan. `true` = kardus yang belum terbaca dibaca ulang PaddleOCR (kotak label, label tegak, area tetap, `OcrRetryScans`): ±90% waktu proses (tuning case 01: OCR 94 dari 104 s) |
 | `Vision:AppearanceMinSimilarity` / `AppearanceMinReferences` / `AppearanceMinMargin` | 0.80 / 1 / 0.05 | Syarat inferensi tampilan: minimal 1 kardus terbaca dengan kemiripan ≥ 0.80, dan SKU lain kalah ≥ 0.05. Tuning case 01 (container biru): kardus SKU & desain sama 0.84–0.95, SKU lain ≤ 0.75 (pada 0.95 hampir tidak ada yang terisi). Risiko diketahui: foto 4519909695 punya kardus Lux di balik plastik yang mirip teh Sariwangi ±0.93 → akan diberi SKU teh (salah); naikkan nilai ini jika kasus seperti itu sering terjadi |
+| `Vision:AppearanceMergeMinSimilarity` | 0.85 | SKU kembar: dua SKU terbaca di foto yang sama yang berselisih ≤ `MajorityMaxDistance` digit dan kardusnya berkemiripan tampilan ≥ 0.85 dianggap salah baca produk yang sama, disatukan ke SKU terdekat angkanya yang lebih kuat (lebih sering terbaca; sama banyak: keyakinan lebih tinggi), status `Corrected`, dicatat di Log proses. SKU yang lemah hanya dipindah jika terbaca di 1 kardus atau SKU kuat ≥ `MajorityDominance`× lebih banyak: varian satu keluarga produk bernomor berurutan bisa ada di satu muatan (data lapangan: 65730554 ×8 dan 65730557 ×11 di satu foto). Berjalan sebelum potongan nomor dan inferensi tampilan. Tuning case 01: Sunsilk `65632152` (88%) → `65632159` (97%). SKU di `candidateSkus` tidak pernah dipindah; Rinso 65081657/65081663 (kemiripan 0,66–0,75) tetap terpisah. 0 = nonaktif |
+| (rekonstruksi SKU) | memakai `AppearanceMergeMinSimilarity` | Bacaan yang kehilangan satu digit di dua kardus atau lebih yang terlihat sama direkonstruksi menjadi SKU utuh: SKU yang jika dihapus satu digitnya menghasilkan masing-masing bacaan (tuning case 01: Molto `6871156` + `6487156` → 64871156; Pepsodent `6495562` + `6495546` → 64955462). Pemilihan kandidat: jumlah kardus pendukung, lalu rata-rata keyakinan OCR bacaan pendukung, lalu kedekatan (≤ 1 digit) dengan bacaan utuh di kelompok yang sama; tetap seri = tidak dipakai. Hanya tanpa `candidateSkus`. Dicatat di Log proses. Inferensi tampilan juga tidak lagi memberi SKU yang bertentangan dengan angka yang terbaca di kardus itu sendiri: SKU yang bertentangan disisihkan dulu, lalu dipilih SKU termirip dari yang tersisa (tuning case 01 #22: `5457156` paling mirip tetangga 64924088 → diberi Molto 64871156). Potongan 5–6 digit dianggap cocok jika digitnya muncul berurutan di SKU walau ada digit terlewat (`655959`, `65900` ↔ 65590059), dan potongan 6 digit boleh beda 1 digit (#46: label tertutup lakban `649558` ↔ 64955462) |
 | `Photo:ClassifierModel` / `ClassifierRejectThreshold` | `fast-reject-v3` / 0.7565 | Fast reject classifier (MobileNetV3, ±3 ms/foto) dijalankan setelah gate resolusi, sebelum deteksi: foto ditolak (`FAST_REJECTED`) jika p(tolak) ≥ ambang; di bawahnya (ragu) lolos. Model = subfolder di `Vision:ModelsDirectory` (model card `task` berisi "classifier", tidak muncul di daftar model deteksi). Skor setiap foto dicatat di log `Fast reject classifier ...`. Kosong = nonaktif. Validasi silang fast-reject-v3 di ambang 0.7565: 1/65 foto layak tertolak, 72% foto tidak layak tertangkap |
 | `Photo:MinCartonCount` / `MinCartonCoverage` | 5 / 0.08 | Fast reject sebelum OCR: foto ditolak (`FAST_REJECTED`) jika kardus terdeteksi < 5 atau total luas kotak kardus < 8% luas foto (bukan muatan, kontainer kosong, terlalu jauh). Gate yang menolak dicatat di log `Fast reject: gate ...`. 0 = nonaktif |
 | `FrontLayer:MinWidthRatio` / `MaxGapRatio` | 0.6 / 0.35 | Filter lapisan belakang |
@@ -117,6 +132,9 @@ File model **tidak di-commit** dan **tidak ikut di image** (sesuai brief). Lokas
   carton-embed-v1/        ← embedder tampilan kardus (Vision:AppearanceModel), bukan model deteksi
     carton-embed-v1.onnx
     model-card.json
+  label-loc-v1/           ← label locator (Vision:LabelLocatorModel), bukan model deteksi kardus
+    label-loc-v1.onnx
+    model-card.json
   fast-reject-v3/         ← classifier fast reject (Photo:ClassifierModel), bukan model deteksi
     fast-reject-v3.onnx
     model-card.json       ← task "fast-reject classifier ...", recommendedRejectThreshold
@@ -137,6 +155,17 @@ Embedder tampilan kardus: salin `carton-trainer/registry/models/carton-embed-vN/
 membuatnya tidak muncul di daftar model deteksi. Input `[N,3,192,192]` RGB 0–1 (crop kotak kardus, resize langsung
 INTER_AREA), output `embedding` `[N,216]` sudah dinormalisasi L2.
 Jika folder model tidak ada, inferensi tampilan dilewati (warning di log), Collect SKU tetap berjalan.
+
+Recognizer teks (`Vision:LabelRecognizerModel`): `ppocr-rec-v4/ch_PP-OCRv4_rec_infer.onnx` (±10 MB) + `model-card.json`.
+Model **bukan buatan kita**: PP-OCRv4 rec dari PaddleOCR (Baidu), lisensi Apache-2.0, diambil dari paket Python
+`rapidocr-onnxruntime` 1.4.4 (`site-packages/rapidocr_onnxruntime/models/`). Daftar karakter dibaca dari metadata
+model. Input `[N,3,48,W]` BGR (x/255 − 0.5)/0.5, output `[N,T,6625]` CTC (indeks 0 = blank).
+
+Label locator: salin `carton-trainer/registry/models/label-loc-vN/` (`.onnx` + `model-card.json`) ke
+`<ModelsDirectory>/label-loc-vN/` dan set `Vision:LabelLocatorModel`. Folder dengan nama itu (atau model card `task`
+berisi "locator") tidak muncul di daftar model deteksi. Input `[1,3,320,320]` BGR 0–255: crop kotak kardus dari foto
+asli, perkecil INTER_AREA sampai sisi terpanjang 384 px, lalu letterbox YOLOX (kiri-atas, isi 114); output
+`[1,2100,6]` YOLOX. Label tegak (diputar 90°) dibaca setelah diputar (lihat `LabelLocatorRotatedMinConfidence`).
 
 Classifier fast reject: salin folder `carton-trainer/registry/models/fast-reject-vN/` (cukup `.onnx` +
 `model-card.json`) ke `<ModelsDirectory>/fast-reject-vN/`, set `Photo:ClassifierModel` dan

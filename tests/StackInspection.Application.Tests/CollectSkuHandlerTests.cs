@@ -241,6 +241,262 @@ public class CollectSkuHandlerTests
     }
 
     [Fact]
+    public async Task LabelLocator_ReadsLabelOutsideFixedArea_AndSkipsFixedAreaForThatCarton()
+    {
+        // Carton(x, y) = 400 × 300; area label tetap = kiri-atas 60 % × 30 %. Label kardus ini di kanan-bawah.
+        CartonBox rightLabel = Build.Carton(300, 600);
+        CartonBox fixedLabel = Build.Carton(710, 600);
+        StubReader reader = new(new Dictionary<BoundingBox, (string?, string?)> { [fixedLabel.Box] = ("68582213", null) });
+        reader.Anywhere.Add(new OcrText("68410975", 0.95, new BoundingBox(560, 820, 680, 860)));
+        StubLocator locator = new(new Dictionary<BoundingBox, BoundingBox> { [rightLabel.Box] = new(550, 810, 690, 870) });
+        CollectSkuHandler handler = Build.Handler(
+            new StubDecoder(3000, 4000), new StubDetector([rightLabel, fixedLabel]), reader, locator: locator);
+
+        CollectSkuResponse result = await handler.HandleAsync(
+            new CollectSkuCommand(Build.Jpeg, ["68410975", "68582213"]), None);
+
+        Assert.Equal(1, locator.Calls);
+        // tahap 0: kotak label (+ margin, dipotong ke kardus) diperbesar; tahap 1: hanya kardus kedua
+        Assert.Equal([320, 0], reader.Scans);
+        Assert.Equal(LabelRegionOf(fixedLabel), Assert.Single(reader.LastRegions));
+        Dictionary<int, CellDto> byColumn = result.Cells.ToDictionary(c => c.Column);
+        Assert.Equal(("68410975", ReadStatus.Matched), (byColumn[0].Sku, byColumn[0].ReadStatus));
+        Assert.Equal(("68582213", ReadStatus.Matched), (byColumn[1].Sku, byColumn[1].ReadStatus));
+    }
+
+    [Fact]
+    public async Task LabelLocator_VerticalLabel_ReadAfterRotation_OnlyConfidentEightDigits()
+    {
+        // Carton(x, y) = 400 × 300. Kotak label tegak (40 × 120) di kanan; putaran salah = angka acak/huruf.
+        CartonBox standing = Build.Carton(300, 600);
+        CartonBox lowConfidence = Build.Carton(710, 600);
+        BoundingBox standingLabel = new(640, 650, 680, 770);
+        BoundingBox lowLabel = new(1050, 650, 1090, 770);
+        StubReader reader = new([]);
+        // seperti tuning case 01: putaran benar "[65067525]" (bingkai label), putaran salah huruf/angka acak
+        reader.Rotated[standingLabel] = [("[65067525]", 0.924), ("SZS2L0S9", 0.97), ("(869099)", 0.516)];
+        reader.Rotated[lowLabel] = [("65067525", 0.62)];
+        StubLocator locator = new(new Dictionary<BoundingBox, BoundingBox>
+        {
+            [standing.Box] = standingLabel,
+            [lowConfidence.Box] = lowLabel,
+        });
+
+        CollectSkuResponse result = await Build.Handler(
+                new StubDecoder(3000, 4000), new StubDetector([standing, lowConfidence]), reader, locator: locator)
+            .HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None);
+
+        Assert.Equal(2, reader.RotatedRegions.Count);
+        // tidak ada label mendatar (tahap 0 @320 dilewati); area tetap hanya untuk kardus yang belum terbaca
+        Assert.Equal([0], reader.Scans);
+        Dictionary<int, CellDto> byColumn = result.Cells.ToDictionary(c => c.Column);
+        Assert.Equal(("65067525", ReadStatus.Matched), (byColumn[0].Sku, byColumn[0].ReadStatus));
+        Assert.Equal(ReadStatus.LabelNotVisible, byColumn[1].ReadStatus);
+    }
+
+    [Fact]
+    public async Task LabelRecognizer_ConfidentRead_SkipsPaddle_UnsureReadFallsBackToPaddle()
+    {
+        CartonBox sure = Build.Carton(300, 600);
+        CartonBox unsure = Build.Carton(710, 600);
+        BoundingBox sureLabel = new(560, 820, 680, 860);
+        BoundingBox unsureLabel = new(970, 820, 1090, 860);
+        StubReader reader = new([]);
+        reader.Anywhere.Add(new OcrText("68582213", 0.95, new BoundingBox(975, 825, 1085, 855))); // dibaca Paddle
+        StubRecognizer recognizer = new(new Dictionary<BoundingBox, (string, double)>
+        {
+            [sureLabel] = ("68410975", 0.99),
+            [unsureLabel] = ("68582218", 0.91), // salah 1 digit, di bawah ambang 0,95 → diabaikan
+        });
+        StubLocator locator = new(new Dictionary<BoundingBox, BoundingBox> { [sure.Box] = sureLabel, [unsure.Box] = unsureLabel });
+
+        CollectSkuResponse result = await Build.Handler(
+                new StubDecoder(3000, 4000), new StubDetector([sure, unsure]), reader, locator: locator, recognizer: recognizer)
+            .HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None);
+
+        // recognizer membaca kotak mentah (tanpa margin) kedua kardus
+        Assert.Equal([sureLabel, unsureLabel], recognizer.Regions.Select(r => r.Box));
+        Assert.All(recognizer.Regions, r => Assert.Equal(TextLineRotation.None, r.Rotation));
+        // Paddle tahap 0b hanya untuk kardus yang belum terbaca yakin
+        Assert.Equal(320, reader.Scans[0]);
+        Assert.DoesNotContain(reader.LastRegions, r => r.CenterX < 700);
+        Dictionary<int, CellDto> byColumn = result.Cells.ToDictionary(c => c.Column);
+        Assert.Equal(("68410975", ReadStatus.Matched), (byColumn[0].Sku, byColumn[0].ReadStatus));
+        Assert.Equal(("68582213", ReadStatus.Matched), (byColumn[1].Sku, byColumn[1].ReadStatus));
+    }
+
+    [Fact]
+    public async Task WithoutPaddle_UsesAllRecognizerReads_AndNeverCallsPaddle()
+    {
+        CartonBox sure = Build.Carton(300, 600);
+        CartonBox unsure = Build.Carton(710, 600);
+        CartonBox noLabel = Build.Carton(1120, 600);
+        BoundingBox sureLabel = new(560, 820, 680, 860);
+        BoundingBox unsureLabel = new(970, 820, 1090, 860);
+        StubReader reader = new(new Dictionary<BoundingBox, (string?, string?)> { [noLabel.Box] = ("68140913", null) });
+        StubRecognizer recognizer = new(new Dictionary<BoundingBox, (string, double)>
+        {
+            [sureLabel] = ("68410975", 0.99),
+            [unsureLabel] = ("68582213", 0.80), // di bawah ambang 0,95, tetap dipakai tanpa Paddle
+        });
+        StubLocator locator = new(new Dictionary<BoundingBox, BoundingBox> { [sure.Box] = sureLabel, [unsure.Box] = unsureLabel });
+
+        CollectSkuResponse result = await Build.Handler(
+                new StubDecoder(3000, 4000), new StubDetector([sure, unsure, noLabel]), reader,
+                locator: locator, recognizer: recognizer, paddleOcrFallback: false)
+            .HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None);
+
+        Assert.Equal(0, reader.Calls);
+        Dictionary<int, CellDto> byColumn = result.Cells.ToDictionary(c => c.Column);
+        Assert.Equal(("68410975", ReadStatus.Matched), (byColumn[0].Sku, byColumn[0].ReadStatus));
+        Assert.Equal(("68582213", ReadStatus.Matched), (byColumn[1].Sku, byColumn[1].ReadStatus));
+        Assert.Equal(ReadStatus.LabelNotVisible, byColumn[2].ReadStatus); // tanpa kotak label dan tanpa Paddle
+    }
+
+    [Fact]
+    public async Task CutLabelAtCartonTop_IsReadFromAreaExtendedAboveCarton_AndStaysWithItsCarton()
+    {
+        // tuning case 01 #25: kotak kardus mulai di tengah label, kotak label tinggal 62 × 11 px di tepi atas kardus
+        CartonBox cut = Build.Carton(300, 600);
+        CartonBox normal = Build.Carton(710, 600);
+        BoundingBox cutLabel = new(360, 600, 484, 620);     // 124 × 20: lebih pipih dari label biasa
+        BoundingBox normalLabel = new(770, 650, 890, 690);  // 120 × 40, di tengah kardus
+        StubRecognizer recognizer = new(new Dictionary<BoundingBox, (string, double)>
+        {
+            [new BoundingBox(360, 570, 484, 620)] = ("64924088", 0.99),
+            [normalLabel] = ("64924088", 0.99),
+        });
+        StubLocator locator = new(new Dictionary<BoundingBox, BoundingBox> { [cut.Box] = cutLabel, [normal.Box] = normalLabel });
+
+        CollectSkuResponse result = await Build.Handler(
+                new StubDecoder(3000, 4000), new StubDetector([cut, normal]), new StubReader([]),
+                locator: locator, recognizer: recognizer, paddleOcrFallback: false)
+            .HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None);
+
+        BoundingBox extended = recognizer.Regions[0].Box;
+        Assert.Equal((360, 484, 620), (extended.X1, extended.X2, extended.Y2));
+        Assert.InRange(extended.Y1, 578, 580); // 124 / 3 − 20 ≈ 21 px ke atas, sampai rasio label ~3 : 1
+        Assert.Equal(normalLabel, recognizer.Regions[1].Box);
+        Assert.All(result.Cells, c => Assert.Equal(("64924088", ReadStatus.Matched), (c.Sku, c.ReadStatus)));
+        Assert.Contains(result.LabelBoxes, l => l.BoundingBox.Y1 == cutLabel.Y1 && l.BoundingBox.Y2 == cutLabel.Y2 && l.Text == "64924088");
+    }
+
+    [Fact]
+    public async Task SiblingSkus_SunsilkGroup_MergedThenPartialAndAppearanceResolve()
+    {
+        // tuning case 01: #16 65632159 (97%), #31 65632152 (88%), #30 "6563215", #39 tanpa bacaan; semua Sunsilk
+        CartonBox[] sunsilk = [Build.Carton(300, 600), Build.Carton(710, 600), Build.Carton(1120, 600), Build.Carton(1530, 600)];
+        BoundingBox Label(CartonBox c) => new(c.Box.X1 + 10, c.Box.Y1 + 10, c.Box.X1 + 130, c.Box.Y1 + 50);
+        StubRecognizer recognizer = new(new Dictionary<BoundingBox, (string, double)>
+        {
+            [Label(sunsilk[0])] = ("65632159", 0.97),
+            [Label(sunsilk[1])] = ("65632152", 0.88),
+            [Label(sunsilk[2])] = ("6563215", 0.90),
+        });
+        StubLocator locator = new(sunsilk.ToDictionary(c => c.Box, Label));
+
+        CollectSkuResponse result = await Build.Handler(
+                new StubDecoder(3000, 4000), new StubDetector(sunsilk), new StubReader([]),
+                embedder: new StubEmbedder(_ => [1f, 0f]), locator: locator, recognizer: recognizer, paddleOcrFallback: false)
+            .HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None);
+
+        Dictionary<int, CellDto> byColumn = result.Cells.ToDictionary(c => c.Column);
+        Assert.All(byColumn.Values, c => Assert.Equal("65632159", c.Sku));
+        Assert.Equal(
+            [ReadStatus.Matched, ReadStatus.Corrected, ReadStatus.Corrected, ReadStatus.InferredByAppearance],
+            byColumn.OrderBy(c => c.Key).Select(c => c.Value.ReadStatus));
+        Assert.Contains("SKU_CORRECTED_BY_MAJORITY", result.Warnings);
+    }
+
+    [Fact]
+    public async Task Reconstruction_PepsodentBlock_RecoversFromWrongFullReadAndDroppedDigits()
+    {
+        // tuning case 01: #33 64955472 (salah, 97%), #42 6495562, #51 6495546 (sama-sama kurang angka 4), #34 potongan 64955
+        CartonBox[] pepsodent = [Build.Carton(300, 600), Build.Carton(710, 600), Build.Carton(1120, 600), Build.Carton(1530, 600)];
+        BoundingBox Label(CartonBox c) => new(c.Box.X1 + 10, c.Box.Y1 + 10, c.Box.X1 + 130, c.Box.Y1 + 50);
+        StubRecognizer recognizer = new(new Dictionary<BoundingBox, (string, double)>
+        {
+            [Label(pepsodent[0])] = ("64955472", 0.97),
+            [Label(pepsodent[1])] = ("6495562", 0.99),
+            [Label(pepsodent[2])] = ("6495546", 0.98),
+            [Label(pepsodent[3])] = ("64955", 0.90),
+        });
+
+        CollectSkuResponse result = await Build.Handler(
+                new StubDecoder(3000, 4000), new StubDetector(pepsodent), new StubReader([]),
+                embedder: new StubEmbedder(_ => [1f, 0f]),
+                locator: new StubLocator(pepsodent.ToDictionary(c => c.Box, Label)),
+                recognizer: recognizer,
+                paddleOcrFallback: false)
+            .HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None);
+
+        Assert.All(result.Cells, c => Assert.Equal("64955462", c.Sku));
+        Assert.All(result.Cells, c => Assert.Equal(ReadStatus.Corrected, c.ReadStatus));
+    }
+
+    [Fact]
+    public async Task LabelBoxes_ReportLocatorBoxAndBestRecognizerRead()
+    {
+        CartonBox upright = Build.Carton(300, 600);
+        CartonBox standing = Build.Carton(710, 600);
+        BoundingBox uprightLabel = new(560, 820, 680, 860);
+        BoundingBox standingLabel = new(1050, 650, 1090, 770);
+        StubRecognizer recognizer = new(new Dictionary<BoundingBox, (string, double)>
+        {
+            [uprightLabel] = ("6487156", 0.99),
+            [standingLabel] = ("65067525", 0.95),
+        });
+
+        CollectSkuResponse result = await Build.Handler(
+                new StubDecoder(3000, 4000), new StubDetector([upright, standing]), new StubReader([]),
+                locator: new StubLocator(new Dictionary<BoundingBox, BoundingBox> { [upright.Box] = uprightLabel, [standing.Box] = standingLabel }),
+                recognizer: recognizer,
+                paddleOcrFallback: false)
+            .HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None);
+
+        Assert.Equal(2, result.LabelBoxes.Count);
+        Dictionary<int, int> idByColumn = result.Cells.ToDictionary(c => c.Column, c => c.Id!.Value);
+        LabelBoxDto first = Assert.Single(result.LabelBoxes, b => b.CartonId == idByColumn[0]);
+        Assert.Equal(
+            (560, 820, 680, 860, 0.9, "6487156", 0.99),
+            (first.BoundingBox.X1, first.BoundingBox.Y1, first.BoundingBox.X2, first.BoundingBox.Y2, first.Confidence, first.Text, first.TextConfidence));
+        Assert.Equal("65067525", Assert.Single(result.LabelBoxes, b => b.CartonId == idByColumn[1]).Text);
+    }
+
+    [Fact]
+    public async Task LabelRecognizer_VerticalLabel_TriesBothRotations()
+    {
+        CartonBox standing = Build.Carton(300, 600);
+        BoundingBox label = new(640, 650, 680, 770);
+        StubRecognizer recognizer = new(new Dictionary<BoundingBox, (string, double)> { [label] = ("65067525", 0.97) });
+
+        CollectSkuResponse result = await Build.Handler(
+                new StubDecoder(3000, 4000), new StubDetector([standing]), new StubReader([]),
+                locator: new StubLocator(new Dictionary<BoundingBox, BoundingBox> { [standing.Box] = label }), recognizer: recognizer)
+            .HandleAsync(new CollectSkuCommand(Build.Jpeg, []), None);
+
+        Assert.Equal([TextLineRotation.Clockwise, TextLineRotation.CounterClockwise], recognizer.Regions.Select(r => r.Rotation));
+        Assert.Equal("65067525", Assert.Single(result.Cells).Sku);
+    }
+
+    [Fact]
+    public async Task LabelLocator_Disabled_ReadsFixedAreaOfAllCartonsLikeBefore()
+    {
+        CartonBox rightLabel = Build.Carton(300, 600);
+        StubReader reader = new([]);
+        reader.Anywhere.Add(new OcrText("68410975", 0.95, new BoundingBox(560, 820, 680, 860)));
+
+        CollectSkuResponse result = await Build.Handler(new StubDecoder(3000, 4000), new StubDetector([rightLabel]), reader)
+            .HandleAsync(new CollectSkuCommand(Build.Jpeg, ["68410975"]), None);
+
+        Assert.Equal([0], reader.Scans);
+        Assert.Equal(ReadStatus.LabelNotVisible, Assert.Single(result.Cells).ReadStatus);
+    }
+
+    private static BoundingBox LabelRegionOf(CartonBox carton) =>
+        new(carton.Box.X1, carton.Box.Y1, carton.Box.X1 + (carton.Box.Width * 0.6), carton.Box.Y1 + (carton.Box.Height * 0.3));
+
+    [Fact]
     public async Task OcrRetryScans_StopWhenAllCartonsRead()
     {
         CartonBox labelled = Build.Carton(300, 600);

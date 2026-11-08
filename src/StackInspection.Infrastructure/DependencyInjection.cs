@@ -1,9 +1,11 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using StackInspection.Application.Abstractions;
 using StackInspection.Application.Configuration;
 using StackInspection.Infrastructure.Fakes;
+using StackInspection.Infrastructure.Logging;
 using StackInspection.Infrastructure.Vision;
 
 namespace StackInspection.Infrastructure;
@@ -19,6 +21,11 @@ public static class DependencyInjection
     {
         _ = configuration;
 
+        // log per request ikut dikirim di response Collect SKU dan preview (lihat ProcessingLogCollector)
+        services.AddSingleton<ProcessingLogCollector>();
+        services.AddSingleton<IProcessingLog>(sp => sp.GetRequiredService<ProcessingLogCollector>());
+        services.AddSingleton<ILoggerProvider>(sp => sp.GetRequiredService<ProcessingLogCollector>());
+
         services.AddSingleton<FakeVisionFixtureProvider>();
         services.AddSingleton<FakeImageDecoder>();
         services.AddSingleton<FakeCartonDetector>();
@@ -27,6 +34,8 @@ public static class DependencyInjection
         services.AddSingleton<FakeModelCatalog>();
         services.AddSingleton<FakePhotoClassifier>();
         services.AddSingleton<FakeCartonEmbedder>();
+        services.AddSingleton<FakeLabelLocator>();
+        services.AddSingleton<FakeTextLineRecognizer>();
 
         services.AddSingleton<OpenCvImageDecoder>();
         services.AddSingleton<OnnxCartonDetector>();
@@ -34,6 +43,8 @@ public static class DependencyInjection
         services.AddSingleton<FileSystemModelCatalog>();
         services.AddSingleton<OnnxPhotoClassifier>();
         services.AddSingleton<OnnxCartonEmbedder>();
+        services.AddSingleton<OnnxLabelLocator>();
+        services.AddSingleton<OnnxTextLineRecognizer>();
 
         services.AddSingleton<IModelCatalog>(sp => UseFake(sp)
             ? sp.GetRequiredService<FakeModelCatalog>()
@@ -57,6 +68,12 @@ public static class DependencyInjection
         services.AddSingleton<ICartonEmbedder>(sp => UseFake(sp)
             ? sp.GetRequiredService<FakeCartonEmbedder>()
             : sp.GetRequiredService<OnnxCartonEmbedder>());
+        services.AddSingleton<ILabelLocator>(sp => UseFake(sp)
+            ? sp.GetRequiredService<FakeLabelLocator>()
+            : sp.GetRequiredService<OnnxLabelLocator>());
+        services.AddSingleton<ITextLineRecognizer>(sp => UseFake(sp)
+            ? sp.GetRequiredService<FakeTextLineRecognizer>()
+            : sp.GetRequiredService<OnnxTextLineRecognizer>());
         return services;
     }
 

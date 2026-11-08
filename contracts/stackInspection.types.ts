@@ -111,6 +111,33 @@ export interface CollectSkuResponse {
   processingTimeMs: number;
   /** Rincian waktu proses per tahap (ms); jumlahnya ≈ processingTimeMs. */
   timings: CollectSkuTimingsDto;
+  /** Log server selama proses ini, untuk diagnosis saja (format bisa berubah). */
+  logs: ProcessingLogDto[];
+  /** Kotak label hasil label locator + teks yang dibaca OCR, untuk diagnosis saja. */
+  labelBoxes: LabelBoxDto[];
+}
+
+/** Satu kotak label hasil label locator (diagnosis). */
+export interface LabelBoxDto {
+  /** id kardus pemilik label (= cells[].id). */
+  cartonId: number;
+  boundingBox: BoundingBoxDto;
+  /** Skor label locator 0–1. */
+  confidence: number;
+  /** Teks yang dibaca OCR dari kotak ini; null = tidak terbaca. */
+  text: string | null;
+  textConfidence: number;
+}
+
+/** Satu baris log proses (diagnosis). */
+export interface ProcessingLogDto {
+  /** Waktu sejak proses dimulai (ms). */
+  atMs: number;
+  /** Information | Warning | Error. */
+  level: string;
+  /** Komponen penulis log, mis. CollectSkuHandler. */
+  source: string;
+  message: string;
 }
 
 /** Waktu eksekusi tiap tahap pipeline Collect SKU (ms). */
@@ -121,7 +148,9 @@ export interface CollectSkuTimingsDto {
   inspectMs: number;
   /** Deteksi kardus + filter kotak bersarang, gate hasil deteksi, filter lapisan depan. */
   detectMs: number;
-  /** OCR area label semua kardus (+ tahap 2 jika aktif), termasuk menunggu giliran OCR request lain. */
+  /** Label locator: mencari kotak label SKU di setiap kardus (0 jika nonaktif). */
+  labelLocateMs: number;
+  /** OCR kotak label + area label tetap (+ tahap 2 jika aktif), termasuk menunggu giliran OCR request lain. */
   ocrMs: number;
   /** Fuzzy match, koreksi mayoritas, potongan nomor, inferensi tampilan. */
   skuResolveMs: number;

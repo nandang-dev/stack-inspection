@@ -37,11 +37,12 @@ public sealed partial class PaddleOcrTextReader : ISkuLabelReader, ITextSpotter,
     private const int RecognizeBatchSize = 16;
     private const double DuplicateContainment = 0.6;
 
-    private readonly PaddleOcrAll _ocr;
+    // dimuat saat pertama dipakai: tanpa cadangan Paddle (Vision:PaddleOcrFallback = false) model tidak memakan RAM
+    private readonly Lazy<PaddleOcrAll> _engine;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly int _tileOverlap;
     private readonly double _maxUpscale;
-    private readonly float? _nativeBoxScore;
+    private float? _nativeBoxScore;
     private readonly float _enlargedBoxScore;
     private readonly ILogger<PaddleOcrTextReader> _logger;
 
@@ -51,14 +52,21 @@ public sealed partial class PaddleOcrTextReader : ISkuLabelReader, ITextSpotter,
         _tileOverlap = options.Value.OcrTileOverlap;
         _maxUpscale = options.Value.OcrMaxUpscale;
         _logger = logger;
-        _ocr = new PaddleOcrAll(LocalFullModels.ChineseV5, PaddleDevice.OneDnn(cpuMathThreadCount: options.Value.Threads))
+        int threads = options.Value.Threads;
+        _engine = new Lazy<PaddleOcrAll>(() =>
         {
-            AllowRotateDetection = false,
-            Enable180Classification = false,
-        };
-        _nativeBoxScore = _ocr.Detector.BoxScoreThreahold;
+            PaddleOcrAll engine = new(LocalFullModels.ChineseV5, PaddleDevice.OneDnn(cpuMathThreadCount: threads))
+            {
+                AllowRotateDetection = false,
+                Enable180Classification = false,
+            };
+            _nativeBoxScore = engine.Detector.BoxScoreThreahold;
+            return engine;
+        });
         _enlargedBoxScore = (float)options.Value.OcrBoxScoreThreshold;
     }
+
+    private PaddleOcrAll Ocr => _engine.Value;
 
     public async Task<IReadOnlyList<OcrText>> ReadAllAsync(
         VisionImage image, IReadOnlyList<BoundingBox> regions, int minAreaWidth, CancellationToken cancellationToken)
@@ -87,14 +95,14 @@ public sealed partial class PaddleOcrTextReader : ISkuLabelReader, ITextSpotter,
         {
             TimeSpan waited = Stopwatch.GetElapsedTime(waitStart);
             // aman diubah per panggilan: akses detektor diserialisasi oleh _gate
-            _ocr.Detector.BoxScoreThreahold = enlarged ? _enlargedBoxScore : _nativeBoxScore;
+            Ocr.Detector.BoxScoreThreahold = enlarged ? _enlargedBoxScore : _nativeBoxScore;
             long detectStart = Stopwatch.GetTimestamp();
             List<RotatedRect> found = [];
             foreach (IGrouping<int, OcrPiece> page in packing.Pieces.GroupBy(p => p.Page))
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 using Mat input = BuildPage(source.Mat, page);
-                foreach (RotatedRect rect in _ocr.Detector.Run(input))
+                foreach (RotatedRect rect in Ocr.Detector.Run(input))
                 {
                     // kembalikan ke koordinat foto lewat potongan yang memuat titik tengahnya (dibagi skala perbesaran)
                     OcrPiece? piece = page.FirstOrDefault(p =>
@@ -129,7 +137,7 @@ public sealed partial class PaddleOcrTextReader : ISkuLabelReader, ITextSpotter,
             Mat[] crops = [.. kept.Select(i => source.Mat[inside[i].Rect.BoundingRect() & new Rect(0, 0, source.Width, source.Height)].Clone())];
             try
             {
-                PaddleOcrRecognizerResult[] results = _ocr.Recognizer.Run(crops, RecognizeBatchSize);
+                PaddleOcrRecognizerResult[] results = Ocr.Recognizer.Run(crops, RecognizeBatchSize);
                 List<OcrText> texts = [];
                 for (int i = 0; i < results.Length; i++)
                 {
@@ -165,6 +173,87 @@ public sealed partial class PaddleOcrTextReader : ISkuLabelReader, ITextSpotter,
         }
     }
 
+    public async Task<IReadOnlyList<OcrText>> ReadRotatedAsync(
+        VisionImage image, IReadOnlyList<BoundingBox> regions, int minAreaWidth, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(regions);
+        OpenCvImage source = OpenCvImage.From(image);
+        List<(Mat Input, BoundingBox Region)> inputs = [];
+        try
+        {
+            foreach (BoundingBox region in regions)
+            {
+                using Mat? crop = source.Crop(region);
+                if (crop is null)
+                {
+                    continue;
+                }
+
+                foreach (RotateFlags flag in (RotateFlags[])[RotateFlags.Rotate90Clockwise, RotateFlags.Rotate90Counterclockwise])
+                {
+                    using Mat rotated = new();
+                    Cv2.Rotate(crop, rotated, flag);
+                    inputs.Add((Prepare(rotated, minAreaWidth), region));
+                }
+            }
+
+            if (inputs.Count == 0)
+            {
+                return [];
+            }
+
+            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                Ocr.Detector.BoxScoreThreahold = minAreaWidth > 0 ? _enlargedBoxScore : _nativeBoxScore;
+                List<OcrText> texts = [];
+                foreach ((Mat input, BoundingBox region) in inputs)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    texts.AddRange(Ocr.Run(input).Regions
+                        .Where(r => !string.IsNullOrWhiteSpace(r.Text))
+                        .Select(r => new OcrText(r.Text, r.Score, region)));
+                }
+
+                return texts;
+            }
+            finally
+            {
+                _gate.Release();
+            }
+        }
+        finally
+        {
+            foreach ((Mat input, _) in inputs)
+            {
+                input.Dispose();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Potongan label yang sudah diputar: diperbesar seperti <see cref="OcrPacker.UpscaleOf"/> (bicubic), lalu diberi
+    /// bingkai putih <see cref="PieceGap"/> px seperti potongan di halaman deteksi.
+    /// </summary>
+    private Mat Prepare(Mat rotated, int minAreaWidth)
+    {
+        double scale = OcrPacker.UpscaleOf(rotated.Width, Math.Max(0, minAreaWidth), _maxUpscale);
+        using Mat resized = new();
+        if (scale > 1)
+        {
+            Cv2.Resize(
+                rotated, resized, new Size((int)Math.Round(rotated.Width * scale), (int)Math.Round(rotated.Height * scale)), 0, 0, InterpolationFlags.Cubic);
+        }
+        else
+        {
+            rotated.CopyTo(resized);
+        }
+
+        Mat framed = new();
+        Cv2.CopyMakeBorder(resized, framed, PieceGap, PieceGap, PieceGap, PieceGap, BorderTypes.Constant, Scalar.All(255));
+        return framed;
+    }
+
     public async Task<IReadOnlyList<OcrText>> SpotAsync(VisionImage image, BoundingBox region, CancellationToken cancellationToken)
     {
         using Mat? crop = OpenCvImage.From(image).Crop(region);
@@ -177,8 +266,8 @@ public sealed partial class PaddleOcrTextReader : ISkuLabelReader, ITextSpotter,
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            _ocr.Detector.BoxScoreThreahold = _nativeBoxScore;
-            PaddleOcrResult result = _ocr.Run(input);
+            Ocr.Detector.BoxScoreThreahold = _nativeBoxScore;
+            PaddleOcrResult result = Ocr.Run(input);
             return [.. result.Regions
                 .Where(r => !string.IsNullOrWhiteSpace(r.Text))
                 .Select(r => new OcrText(r.Text, r.Score))];
@@ -251,7 +340,10 @@ public sealed partial class PaddleOcrTextReader : ISkuLabelReader, ITextSpotter,
 
     public void Dispose()
     {
-        _ocr.Dispose();
+        if (_engine.IsValueCreated)
+        {
+            _engine.Value.Dispose();
+        }
         _gate.Dispose();
     }
 }

@@ -137,7 +137,7 @@ public sealed class OnnxCartonDetector : ICartonDetector, IDisposable
     }
 
     /// <summary>HWC uint8 BGR → CHW float32 tanpa normalisasi (0–255), sesuai training YOLOX.</summary>
-    private static float[] ToChwFloat(Mat canvas, int size)
+    internal static float[] ToChwFloat(Mat canvas, int size)
     {
         int plane = size * size;
         float[] chw = new float[3 * plane];

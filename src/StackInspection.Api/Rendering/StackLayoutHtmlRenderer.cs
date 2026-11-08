@@ -56,6 +56,7 @@ public static class StackLayoutHtmlRenderer
         }
 
         AppendStacks(html, collect);
+        AppendLogs(html, collect);
         html.Append("</main><script>").Append(Script).Append("</script></body></html>");
         return html.ToString();
     }
@@ -92,6 +93,7 @@ public static class StackLayoutHtmlRenderer
         }
 
         html.Append("</dl>");
+        AppendTimings(html, collect);
         if (collect.Warnings.Count > 0)
         {
             html.Append("<div class=\"chips\">");
@@ -107,6 +109,38 @@ public static class StackLayoutHtmlRenderer
         {
             html.Append("<p class=\"muted\">masterSkus tidak diisi: skor dan pelanggaran tidak dihitung.</p>");
         }
+    }
+
+    /// <summary>
+    /// Rincian waktu per tahap (<c>timings</c>) beserta porsinya dari waktu proses, untuk membandingkan run tanpa
+    /// membuka JSON. Tidak ditampilkan jika semua tahap 0 (mis. hasil LLM di preview-from-result).
+    /// </summary>
+    private static void AppendTimings(StringBuilder html, CollectSkuResponse collect)
+    {
+        CollectSkuTimingsDto t = collect.Timings;
+        (string Label, long Ms)[] stages =
+        [
+            ("Decode", t.DecodeMs),
+            ("Cek foto", t.InspectMs),
+            ("Deteksi kardus", t.DetectMs),
+            ("Label locator", t.LabelLocateMs),
+            ("OCR", t.OcrMs),
+            ("Pencocokan SKU", t.SkuResolveMs),
+            ("Susun grid", t.BuildMs),
+        ];
+        if (stages.All(s => s.Ms <= 0))
+        {
+            return;
+        }
+
+        long total = Math.Max(1, collect.ProcessingTimeMs);
+        html.Append("<dl class=\"stats timings\">");
+        foreach ((string label, long ms) in stages)
+        {
+            Stat(html, label, $"{ms.ToString("N0", Invariant)} ms · {(100.0 * ms / total).ToString("0", Invariant)}%");
+        }
+
+        html.Append("</dl>");
     }
 
     private static void Stat(StringBuilder html, string label, string value) =>
@@ -185,7 +219,20 @@ public static class StackLayoutHtmlRenderer
                 .Append("</title></rect>");
         }
 
-        html.Append("</svg><p class=\"muted\">Koordinat kotak asli di foto; garis = dus menumpu dus di bawahnya (restsOn).</p></section>");
+        // kotak label hasil label locator di atas kotak kardus; tooltip = teks yang dibaca recognizer dari kotak itu
+        foreach (LabelBoxDto label in collect.LabelBoxes)
+        {
+            BoundingBoxDto b = label.BoundingBox;
+            string read = label.Text is null ? "tidak terbaca" : $"{label.Text} (OCR {Percent(label.TextConfidence)})";
+            html.Append("<rect class=\"label\" data-id=\"").Append(label.CartonId).Append("\" x=\"").Append(b.X1).Append("\" y=\"")
+                .Append(b.Y1).Append("\" width=\"").Append(b.X2 - b.X1).Append("\" height=\"").Append(b.Y2 - b.Y1)
+                .Append("\" stroke-width=\"").Append(N(stroke * 0.6)).Append("\"><title>")
+                .Append(E($"Label #{label.CartonId}: {read} · skor locator {Percent(label.Confidence)}")).Append("</title></rect>");
+        }
+
+        html.Append("</svg><p class=\"muted\">Koordinat kotak asli di foto; garis = dus menumpu dus di bawahnya (restsOn)")
+            .Append(collect.LabelBoxes.Count > 0 ? "; kotak merah = label hasil label locator (arahkan kursor: teks yang dibaca OCR)" : string.Empty)
+            .Append(".</p></section>");
     }
 
     private static void AppendLegend(
@@ -246,6 +293,27 @@ public static class StackLayoutHtmlRenderer
         }
 
         html.Append("</ol></section>");
+    }
+
+    /// <summary>Log server selama proses (field <c>logs</c>), supaya analisis tidak perlu membuka log server.</summary>
+    private static void AppendLogs(StringBuilder html, CollectSkuResponse collect)
+    {
+        if (collect.Logs.Count == 0)
+        {
+            return;
+        }
+
+        html.Append("<section class=\"panel wide\"><h2>Log proses</h2><div class=\"table\"><table><thead><tr>")
+            .Append("<th>ms</th><th>Level</th><th>Sumber</th><th>Pesan</th></tr></thead><tbody>");
+        foreach (ProcessingLogDto log in collect.Logs)
+        {
+            bool warning = log.Level is "Warning" or "Error" or "Critical";
+            html.Append("<tr><td>").Append(log.AtMs.ToString("N0", Invariant)).Append("</td><td")
+                .Append(warning ? " class=\"bad\"" : string.Empty).Append('>').Append(E(log.Level)).Append("</td><td>")
+                .Append(E(log.Source)).Append("</td><td>").Append(E(log.Message)).Append("</td></tr>");
+        }
+
+        html.Append("</tbody></table></div></section>");
     }
 
     private static string Tooltip(Tile tile, Dictionary<int, List<ViolationDto>> violations)
@@ -347,6 +415,8 @@ public static class StackLayoutHtmlRenderer
         .box{fill:var(--sku);fill-opacity:.55;stroke:#222}
         .box.unread{fill:#bbb}.box.violation{stroke:var(--bad);stroke-width:6}
         .support{stroke:var(--support);stroke-linecap:round}
+        .label{fill:none;stroke:#e11d48;stroke-opacity:.9}
+        .label:hover{stroke:#0a84ff}
         .hl{filter:brightness(1.15);outline:3px solid #0a84ff !important;outline-offset:-3px}
         rect.hl{stroke:#0a84ff;stroke-width:10;fill-opacity:.85}
         .legend{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:6px}

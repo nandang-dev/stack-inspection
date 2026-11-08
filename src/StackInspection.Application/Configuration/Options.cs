@@ -136,6 +136,74 @@ public sealed class VisionOptions
     public string AppearanceModel { get; set; } = string.Empty;
 
     /// <summary>
+    /// SKU kembar: dua SKU terbaca di foto yang sama yang berselisih ≤ <see cref="MajorityMaxDistance"/> digit dan kardusnya
+    /// berkemiripan tampilan ≥ nilai ini dianggap produk yang sama (salah baca), lalu disatukan ke SKU yang lebih sering
+    /// terbaca (sama banyak: keyakinan OCR lebih tinggi). Lebih ketat dari <see cref="AppearanceMinSimilarity"/>: SKU
+    /// berbeda berdesain mirip (Rinso 65081657 vs 65081663) berkemiripan 0,66–0,75. Butuh <see cref="AppearanceModel"/>.
+    /// 0 = nonaktif.
+    /// </summary>
+    [Range(0.0, 1.0)]
+    public double AppearanceMergeMinSimilarity { get; set; } = 0.85;
+
+    /// <summary>
+    /// Nama subfolder model label locator di <see cref="ModelsDirectory"/> (mis. <c>label-loc-v1</c>, Carton Trainer).
+    /// OCR tahap 0 membaca kotak label yang ditemukan model ini; kardus yang belum terbaca tetap dibaca dari area
+    /// label tetap dan <see cref="OcrRetryScans"/>. Kosong = nonaktif (perilaku sama seperti sebelum ada locator).
+    /// </summary>
+    public string LabelLocatorModel { get; set; } = string.Empty;
+
+    /// <summary>Skor minimal kotak label (objectness × skor kelas).</summary>
+    [Range(0.05, 1.0)]
+    public double LabelLocatorConfidence { get; set; } = 0.5;
+
+    /// <summary>
+    /// Margin area OCR di sekeliling kotak label (× sisi pendek kotak), di luar margin yang sudah ada di data
+    /// training. Area dipotong ke batas kardus. Tuning case 01: kotak label kadang memotong digit terakhir, 0,3 cukup
+    /// untuk menutupnya tanpa ikut membaca teks lain.
+    /// </summary>
+    [Range(0.0, 1.0)]
+    public double LabelLocatorMargin { get; set; } = 0.3;
+
+    /// <summary>
+    /// Kotak label (+ margin) yang lebih sempit dari ini (px) diperbesar sampai selebar ini sebelum OCR, maksimal
+    /// <see cref="OcrMaxUpscale"/> kali (sama seperti <see cref="OcrScanOptions.MinAreaWidth"/>). 0 = resolusi asli.
+    /// </summary>
+    [Range(0, 2000)]
+    public int LabelLocatorMinAreaWidth { get; set; } = 320;
+
+    /// <summary>
+    /// Kotak label tegak (tinggi &gt; lebar, label diputar 90°) dibaca setelah diputar ke dua arah. Teks dari putaran
+    /// hanya dipakai jika berupa tepat 8 angka asli (tanpa huruf mirip angka) dan keyakinannya ≥ nilai ini, karena
+    /// putaran yang salah menghasilkan angka acak (aturan yang sama dengan pre-label data Carton Trainer).
+    /// 0 = label tegak tidak dibaca.
+    /// </summary>
+    [Range(0.0, 1.0)]
+    public double LabelLocatorRotatedMinConfidence { get; set; } = 0.9;
+
+    /// <summary>
+    /// Nama subfolder recognizer teks di <see cref="ModelsDirectory"/> (mis. <c>ppocr-rec-v4</c>: PP-OCRv4 rec ONNX,
+    /// PaddleOCR/Baidu, Apache 2.0). OCR tahap 0a membaca kotak label locator langsung dengan model ini tanpa deteksi
+    /// teks (puluhan kali lebih cepat dari Paddle penuh); kardus yang tidak terbaca yakin tetap dibaca Paddle.
+    /// Kosong = nonaktif. Butuh <see cref="LabelLocatorModel"/>.
+    /// </summary>
+    public string LabelRecognizerModel { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Hasil recognizer hanya dipakai jika keyakinannya ≥ nilai ini; di bawahnya kardus dibaca Paddle seperti biasa.
+    /// Tuning case 01: ≥ 0,95 → 36 benar, 0 salah; ≥ 0,9 → 43 benar, 5 salah.
+    /// </summary>
+    [Range(0.0, 1.0)]
+    public double LabelRecognizerMinConfidence { get; set; } = 0.95;
+
+    /// <summary>
+    /// <c>true</c> = kardus yang belum terbaca yakin oleh recognizer dibaca ulang PaddleOCR (kotak label + margin, label
+    /// tegak, area label tetap, <see cref="OcrRetryScans"/>, <see cref="OcrFullCartonFallback"/>): lambat, ±90% waktu
+    /// proses. <c>false</c> = OCR hanya label locator + recognizer (<see cref="LabelRecognizerModel"/>); semua hasil
+    /// recognizer dipakai (<see cref="LabelRecognizerMinConfidence"/> diabaikan) dan model Paddle tidak dimuat.
+    /// </summary>
+    public bool PaddleOcrFallback { get; set; } = true;
+
+    /// <summary>
     /// Kemiripan tampilan (cosine) minimal ke kardus acuan. Tuning case 01: kardus SKU &amp; desain sama 0,84–0,95,
     /// SKU lain ≤ 0,75.
     /// </summary>
