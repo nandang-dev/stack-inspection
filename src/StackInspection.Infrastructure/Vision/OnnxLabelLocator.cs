@@ -169,10 +169,18 @@ public sealed partial class OnnxLabelLocator : ILabelLocator, IDisposable
         List<IReadOnlyList<LabelBox>> result)
     {
         int itemLength = 3 * size * size;
-        float[] input = new float[batch.Count * itemLength];
-        for (int i = 0; i < batch.Count; i++)
+        float[] input;
+        if (batch.Count == 1)
         {
-            Array.Copy(batch[i].Crop.Input, 0, input, i * itemLength, itemLength);
+            input = batch[0].Crop.Input;
+        }
+        else
+        {
+            input = new float[batch.Count * itemLength];
+            for (int i = 0; i < batch.Count; i++)
+            {
+                Array.Copy(batch[i].Crop.Input, 0, input, i * itemLength, itemLength);
+            }
         }
 
         DenseTensor<float> tensor = new(input, [batch.Count, 3, size, size]);
