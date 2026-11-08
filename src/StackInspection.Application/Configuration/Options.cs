@@ -160,6 +160,10 @@ public sealed class VisionOptions
     [Range(1, 32)]
     public int LabelLocatorBatchSize { get; set; } = 8;
 
+    /// <summary>Jumlah thread ONNX Runtime untuk label locator.</summary>
+    [Range(1, 64)]
+    public int LabelLocatorThreads { get; set; } = 1;
+
     /// <summary>
     /// Margin area OCR di sekeliling kotak label (× sisi pendek kotak), di luar margin yang sudah ada di data
     /// training. Area dipotong ke batas kardus. Tuning case 01: kotak label kadang memotong digit terakhir, 0,3 cukup

@@ -39,7 +39,7 @@ public sealed partial class OnnxLabelLocator : ILabelLocator, IDisposable
         _batchSize = options.Value.LabelLocatorBatchSize;
         string name = options.Value.LabelLocatorModel;
         string folder = Path.Combine(OnnxCartonDetector.ResolvePath(options.Value.ModelsDirectory), name);
-        int threads = options.Value.Threads;
+        int threads = options.Value.LabelLocatorThreads;
         _session = new Lazy<InferenceSession?>(() => string.IsNullOrWhiteSpace(name) ? null : CreateSession(folder, threads));
     }
 
