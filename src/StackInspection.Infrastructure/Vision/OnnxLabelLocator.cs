@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.ML.OnnxRuntime;
@@ -14,7 +15,8 @@ namespace StackInspection.Infrastructure.Vision;
 /// Model: <c>&lt;Vision:ModelsDirectory&gt;/&lt;Vision:LabelLocatorModel&gt;/*.onnx</c>, session dibuat saat pertama kali
 /// dipakai. Preprocess harus sama dengan data training: potong kotak kardus dari foto asli, perkecil (INTER_AREA)
 /// sampai sisi terpanjang <see cref="CropMaxSide"/>, lalu letterbox YOLOX (INTER_LINEAR, kiri-atas, isi 114) ke
-/// ukuran input model, BGR 0–255 NCHW. Model batch 1, jadi kardus diproses satu per satu (±ms per kardus).
+/// ukuran input model, BGR 0–255 NCHW. Model batch-1 diproses satu per satu; model dengan batch dinamis memakai
+/// <see cref="VisionOptions.LabelLocatorBatchSize"/> crop per inferensi.
 /// Model tidak ditemukan → warning di log dan tanpa kotak label (OCR kembali ke area label tetap).
 /// </summary>
 public sealed partial class OnnxLabelLocator : ILabelLocator, IDisposable
@@ -27,15 +29,17 @@ public sealed partial class OnnxLabelLocator : ILabelLocator, IDisposable
     private readonly Lazy<InferenceSession?> _session;
     private readonly ILogger<OnnxLabelLocator> _logger;
     private readonly double _confidence;
+    private readonly int _batchSize;
 
     public OnnxLabelLocator(IOptions<VisionOptions> options, ILogger<OnnxLabelLocator> logger)
     {
         ArgumentNullException.ThrowIfNull(options);
         _logger = logger;
         _confidence = options.Value.LabelLocatorConfidence;
+        _batchSize = options.Value.LabelLocatorBatchSize;
         string name = options.Value.LabelLocatorModel;
         string folder = Path.Combine(OnnxCartonDetector.ResolvePath(options.Value.ModelsDirectory), name);
-        int threads = options.Value.Threads;
+        int threads = options.Value.LabelLocatorThreads;
         _session = new Lazy<InferenceSession?>(() => string.IsNullOrWhiteSpace(name) ? null : CreateSession(folder, threads));
     }
 
@@ -72,23 +76,55 @@ public sealed partial class OnnxLabelLocator : ILabelLocator, IDisposable
         }
 
         string inputName = session.InputMetadata.Keys.First();
-        int size = session.InputMetadata[inputName].Dimensions[^1];
-        List<IReadOnlyList<LabelBox>> result = new(cartons.Count);
-        foreach (BoundingBox carton in cartons)
+        int[] dimensions = session.InputMetadata[inputName].Dimensions;
+        int size = dimensions[^1];
+        int modelBatchSize = dimensions[0];
+        if (modelBatchSize > 1)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            result.Add(Locate(session, inputName, size, source, carton));
+            throw new InvalidOperationException(
+                $"Model label locator memakai batch statis {modelBatchSize}; gunakan batch 1 atau model dengan batch dinamis.");
         }
 
+        // Model lama hasil ekspor batch-1 tetap berjalan; batch hanya aktif pada ONNX dengan dimensi pertama dinamis.
+        int batchSize = modelBatchSize == 1 ? 1 : _batchSize;
+        List<IReadOnlyList<LabelBox>> result = [.. cartons.Select(_ => (IReadOnlyList<LabelBox>)[])];
+        List<(int Index, PreparedCrop Crop)> pending = new(batchSize);
+        Stopwatch stopwatch = Stopwatch.StartNew();
+        int inferenceRuns = 0;
+        for (int i = 0; i < cartons.Count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            PreparedCrop? crop = Prepare(source, cartons[i], size);
+            if (crop is null)
+            {
+                continue;
+            }
+
+            pending.Add((i, crop));
+            if (pending.Count == batchSize)
+            {
+                RunBatch(session, inputName, size, pending, result);
+                pending.Clear();
+                inferenceRuns++;
+            }
+        }
+
+        if (pending.Count > 0)
+        {
+            RunBatch(session, inputName, size, pending, result);
+            inferenceRuns++;
+        }
+
+        LogBatching(_logger, cartons.Count, batchSize, inferenceRuns, stopwatch.ElapsedMilliseconds);
         return Task.FromResult<IReadOnlyList<IReadOnlyList<LabelBox>>>(result);
     }
 
-    private List<LabelBox> Locate(InferenceSession session, string inputName, int size, OpenCvImage source, BoundingBox carton)
+    private static PreparedCrop? Prepare(OpenCvImage source, BoundingBox carton, int size)
     {
         using Mat? crop = source.Crop(carton);
         if (crop is null)
         {
-            return [];
+            return null;
         }
 
         // Titik asal potongan sama dengan OpenCvImage.Crop (floor + clamp).
@@ -115,19 +151,82 @@ public sealed partial class OnnxLabelLocator : ILabelLocator, IDisposable
             resized.CopyTo(target);
         }
 
-        DenseTensor<float> tensor = new(OnnxCartonDetector.ToChwFloat(canvas, size), [1, 3, size, size]);
+        return new PreparedCrop(
+            OnnxCartonDetector.ToChwFloat(canvas, size),
+            crop.Width,
+            crop.Height,
+            originX,
+            originY,
+            scale,
+            geometry.Ratio);
+    }
+
+    private void RunBatch(
+        InferenceSession session,
+        string inputName,
+        int size,
+        IReadOnlyList<(int Index, PreparedCrop Crop)> batch,
+        List<IReadOnlyList<LabelBox>> result)
+    {
+        int itemLength = 3 * size * size;
+        float[] input;
+        if (batch.Count == 1)
+        {
+            input = batch[0].Crop.Input;
+        }
+        else
+        {
+            input = new float[batch.Count * itemLength];
+            for (int i = 0; i < batch.Count; i++)
+            {
+                Array.Copy(batch[i].Crop.Input, 0, input, i * itemLength, itemLength);
+            }
+        }
+
+        DenseTensor<float> tensor = new(input, [batch.Count, 3, size, size]);
         using IDisposableReadOnlyCollection<DisposableNamedOnnxValue> results =
             session.Run([NamedOnnxValue.CreateFromTensor(inputName, tensor)]);
         Tensor<float> output = results[0].AsTensor<float>();
-        float[] values = output is DenseTensor<float> dense ? dense.Buffer.ToArray() : [.. output];
+        if (output.Dimensions.Length != 3
+            || output.Dimensions[0] != batch.Count
+            || output.Dimensions[2] != YoloxPostprocessor.Channels)
+        {
+            throw new InvalidOperationException(
+                $"Dimensi output model label locator tidak cocok dengan batch {batch.Count} dan {YoloxPostprocessor.Channels} channel.");
+        }
 
-        // Koordinat potongan kecil → potongan asli (/scale) → foto (+ titik asal).
-        return [.. YoloxPostprocessor
-            .Decode(values, geometry.Ratio * scale, _confidence, IouThreshold, crop.Width, crop.Height)
-            .Select(b => new LabelBox(
-                new BoundingBox(b.Box.X1 + originX, b.Box.Y1 + originY, b.Box.X2 + originX, b.Box.Y2 + originY),
-                b.Confidence))];
+        float[] values = output is DenseTensor<float> dense ? dense.Buffer.ToArray() : [.. output];
+        int outputLength = values.Length / batch.Count;
+        for (int i = 0; i < batch.Count; i++)
+        {
+            PreparedCrop crop = batch[i].Crop;
+            // Koordinat potongan kecil → potongan asli (/scale) → foto (+ titik asal).
+            result[batch[i].Index] = [.. YoloxPostprocessor
+                .Decode(
+                    values.AsSpan(i * outputLength, outputLength),
+                    crop.Ratio * crop.Scale,
+                    _confidence,
+                    IouThreshold,
+                    crop.Width,
+                    crop.Height)
+                .Select(b => new LabelBox(
+                    new BoundingBox(
+                        b.Box.X1 + crop.OriginX,
+                        b.Box.Y1 + crop.OriginY,
+                        b.Box.X2 + crop.OriginX,
+                        b.Box.Y2 + crop.OriginY),
+                    b.Confidence))];
+        }
     }
+
+    private sealed record PreparedCrop(
+        float[] Input,
+        int Width,
+        int Height,
+        double OriginX,
+        double OriginY,
+        double Scale,
+        double Ratio);
 
     public void Dispose()
     {
@@ -141,4 +240,9 @@ public sealed partial class OnnxLabelLocator : ILabelLocator, IDisposable
         Level = Microsoft.Extensions.Logging.LogLevel.Warning,
         Message = "Model label locator (.onnx) tidak ditemukan di folder {Folder}: OCR memakai area label tetap. Restart setelah model disalin.")]
     private static partial void LogModelMissing(ILogger logger, string folder);
+
+    [LoggerMessage(
+        Level = Microsoft.Extensions.Logging.LogLevel.Information,
+        Message = "Label locator: {CartonCount} kardus, batch {BatchSize}, {InferenceRuns} inferensi, {ElapsedMs} ms")]
+    private static partial void LogBatching(ILogger logger, int cartonCount, int batchSize, int inferenceRuns, long elapsedMs);
 }
