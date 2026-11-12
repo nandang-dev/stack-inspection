@@ -340,6 +340,46 @@ public sealed class StackInspectionsApiTests : IClassFixture<StackInspectionsApi
     }
 
     [Fact]
+    public async Task Preview_RejectedWithAcceptHtml_Returns422JsonWithRejectionMessage()
+    {
+        // Swagger UI/browser mengirim Accept: text/html untuk Preview; penolakan tetap harus JSON yang jelas, bukan 500.
+        string fixture = Path.Combine(Path.GetTempPath(), $"lowres-{Guid.NewGuid():N}.json");
+        await File.WriteAllTextAsync(fixture, """{"imageWidth":1600,"imageHeight":1200,"overlayTexts":[],"cartons":[]}""");
+        using FakeVisionFactory lowRes = new() { FixturePath = fixture };
+        using HttpClient client = lowRes.CreateClient();
+        using HttpRequestMessage request = new(HttpMethod.Post, "/api/v1/stack-inspections/preview") { Content = Upload(Jpeg) };
+        request.Headers.Accept.ParseAdd("text/html");
+
+        using HttpResponseMessage response = await client.SendAsync(request);
+        JsonNode? problem = JsonNode.Parse(await response.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal("PHOTO_NOT_INSPECTABLE", problem?["code"]?.GetValue<string>());
+        Assert.False(string.IsNullOrWhiteSpace(problem?["reason"]?.GetValue<string>()));
+        Assert.False(string.IsNullOrWhiteSpace(problem?["detail"]?.GetValue<string>()));
+        Assert.NotNull(problem?["traceId"]);
+        File.Delete(fixture);
+    }
+
+    [Fact]
+    public async Task Preview_InvalidMasterSkusWithAcceptHtml_Returns400Json()
+    {
+        using HttpClient client = _factory.CreateClient();
+        using MultipartFormDataContent form = Upload(Jpeg);
+        form.Add(new StringContent("bukan json"), "masterSkus");
+        using HttpRequestMessage request = new(HttpMethod.Post, "/api/v1/stack-inspections/preview") { Content = form };
+        request.Headers.Accept.ParseAdd("text/html");
+
+        using HttpResponseMessage response = await client.SendAsync(request);
+        JsonNode? body = JsonNode.Parse(await response.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+        Assert.NotNull(body?["errors"]?["masterSkus"]);
+    }
+
+    [Fact]
     public async Task Collect_JsonUsesCamelCaseAndStringEnums()
     {
         using HttpClient client = _factory.CreateClient();
@@ -495,7 +535,9 @@ public sealed class StackInspectionsApiTests : IClassFixture<StackInspectionsApi
 
         Task<HttpResponseMessage> first = client.PostAsync("/api/v1/stack-inspections/collect-sku", Upload(Jpeg));
         await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        using HttpResponseMessage busy = await client.PostAsync("/api/v1/stack-inspections/preview", Upload(Jpeg));
+        using HttpRequestMessage busyRequest = new(HttpMethod.Post, "/api/v1/stack-inspections/preview") { Content = Upload(Jpeg) };
+        busyRequest.Headers.Accept.ParseAdd("text/html"); // seperti Swagger UI pada Preview
+        using HttpResponseMessage busy = await client.SendAsync(busyRequest);
         release.SetResult();
         using HttpResponseMessage done = await first;
 
