@@ -42,6 +42,8 @@ builder.Services.AddCors(options => options.AddDefaultPolicy(policy =>
 }));
 
 builder.Services.AddProblemDetails();
+// Didaftarkan setelah writer bawaan (MVC + AddProblemDetails): dipakai hanya jika Accept tidak menerima JSON (mis. Preview).
+builder.Services.AddSingleton<IProblemDetailsWriter, JsonFallbackProblemDetailsWriter>();
 builder.Services.AddExceptionHandler<ProblemDetailsExceptionHandler>();
 builder.Services.AddInspectionConcurrency(builder.Configuration);
 builder.Services.Configure<ApiKeyOptions>(options =>
